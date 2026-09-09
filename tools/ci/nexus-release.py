@@ -1,0 +1,198 @@
+#!/usr/bin/env python3
+"""Prepare and verify Nexus mirrors of published GitHub release assets. No API writes."""
+
+import argparse
+import hashlib
+import json
+import os
+from pathlib import Path
+import re
+import subprocess
+import sys
+import urllib.error
+import urllib.request
+import uuid
+
+
+REPOSITORY = "humangenome/ValheimOne"
+MOD_PAGE_ID = "3571"
+
+
+class NoRedirect(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        raise RuntimeError("Unexpected API redirect; credentials were not forwarded")
+
+
+def nexus(path):
+    key = os.environ.get("NEXUSMODS_API_KEY", "")
+    if not key:
+        raise RuntimeError("NEXUSMODS_API_KEY is missing; configure the repository secret")
+    request = urllib.request.Request(
+        "https://api.nexusmods.com" + path,
+        headers={"apikey": key, "Accept": "application/json", "User-Agent": "ValheimOne-release-sync"},
+    )
+    try:
+        with urllib.request.build_opener(NoRedirect).open(request, timeout=45) as response:
+            return json.load(response)
+    except urllib.error.HTTPError as error:
+        raise RuntimeError(f"Nexus API returned HTTP {error.code} for {path}") from None
+
+
+def github_release():
+    result = subprocess.run(
+        ["gh", "api", f"repos/{REPOSITORY}/releases/latest"],
+        capture_output=True, text=True, check=True,
+    )
+    return json.loads(result.stdout)
+
+
+def release_version(release, requested=""):
+    tag = release.get("tag_name", "")
+    if not re.fullmatch(r"v\d+\.\d+\.\d+", tag):
+        raise ValueError("Expected a stable vMAJOR.MINOR.PATCH release")
+    if release.get("draft", True) or release.get("prerelease", True) or not release.get("published_at"):
+        raise ValueError("Only a published stable release can be mirrored")
+    if requested and requested != tag:
+        raise ValueError("Requested release is no longer Latest; refusing to downgrade Nexus")
+    return tag[1:]
+
+
+def verify_assets(folder, release, version):
+    names = [f"ValheimOne-{version}.zip", f"ValheimOne-full-{version}.zip"]
+    sums_name = f"SHA256SUMS-{version}.txt"
+    assets = {a["name"]: a for a in release["assets"]}
+    expected = {}
+    for line in (folder / sums_name).read_text().splitlines():
+        match = re.fullmatch(r"([a-f0-9]{64})\s+\*?([^/\\]+)", line)
+        if not match or match[2] in expected:
+            raise ValueError("Malformed or duplicate release checksum entry")
+        expected[match[2]] = match[1]
+    if set(expected) != set(names):
+        raise ValueError("Release checksum manifest must name exactly the two release zips")
+    for name in [sums_name, *names]:
+        data = (folder / name).read_bytes()
+        digest = hashlib.sha256(data).hexdigest()
+        asset = assets[name]
+        if asset.get("digest") != "sha256:" + digest or asset["size"] != len(data):
+            raise ValueError(f"GitHub asset digest/size mismatch: {name}")
+        if name in expected and expected[name] != digest:
+            raise ValueError(f"Release checksum mismatch: {name}")
+    return names
+
+
+def select_files(files):
+    selected = {}
+    for file in files:
+        name = file.get("name", "")
+        for kind, pattern in (
+            ("plugin", r"ValheimOne(?: \d+\.\d+\.\d+)?"),
+            ("full", r"ValheimOne Full(?: \d+\.\d+\.\d+)?"),
+        ):
+            if re.fullmatch(pattern, name, re.IGNORECASE):
+                if kind in selected:
+                    raise ValueError(f"Multiple Nexus {kind} file groups; review their API IDs")
+                selected[kind] = str(file["id"])
+    if set(selected) != {"plugin", "full"}:
+        raise ValueError("Expected the existing plugin and Full file groups on Nexus")
+    for file_id in selected.values():
+        if not re.fullmatch(r"[A-Za-z0-9-]+", file_id):
+            raise ValueError("Unexpected Nexus file ID")
+    return selected
+
+
+def existing_version(versions, version):
+    target = tuple(map(int, version.split(".")))
+    for item in versions:
+        live_version = item.get("version", "")
+        if item.get("category") == "main" and re.fullmatch(r"\d+\.\d+\.\d+", live_version):
+            if tuple(map(int, live_version.split("."))) > target:
+                raise ValueError("Nexus already has a newer active version; refusing to downgrade")
+    matches = [v for v in versions if v.get("version") == version]
+    if len(matches) > 1:
+        raise ValueError("Duplicate versions on Nexus; review instead of uploading another copy")
+    if matches and matches[0].get("category") != "main":
+        raise ValueError("Matching Nexus version is not an active main file; manual review required")
+    return matches[0] if matches else None
+
+
+def verify_indexed_hash(folder, filename, current):
+    # Nexus's legacy hash index identifies the actual stored archive. SHA-256 above
+    # remains the release integrity check; this MD5 lookup is only index reconciliation.
+    digest = hashlib.md5((folder / filename).read_bytes(), usedforsecurity=False).hexdigest()
+    matches = nexus(f"/v1/games/valheim/mods/md5_search/{digest}.json")
+    if not any(
+        str(m.get("mod", {}).get("mod_id")) == MOD_PAGE_ID
+        and str(m.get("file_details", {}).get("file_id")) == str(current["game_scoped_id"])
+        for m in matches
+    ):
+        raise ValueError("Nexus has not indexed the expected archive; do not upload a duplicate")
+
+
+def write_outputs(values):
+    target = os.environ.get("GITHUB_OUTPUT")
+    if not target:
+        return
+    with open(target, "a") as stream:
+        for key, value in values.items():
+            delimiter = "value_" + uuid.uuid4().hex
+            stream.write(f"{key}<<{delimiter}\n{value}\n{delimiter}\n")
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("mode", choices=["assets", "prepare", "verify"])
+    parser.add_argument("--directory", type=Path, required=True)
+    args = parser.parse_args()
+    release = github_release()
+    version = release_version(release, os.environ.get("RELEASE_TAG", ""))
+    folder = args.directory
+    folder.mkdir(parents=True, exist_ok=True)
+    if args.mode != "verify":
+        for name in [f"ValheimOne-{version}.zip", f"ValheimOne-full-{version}.zip", f"SHA256SUMS-{version}.txt"]:
+            subprocess.run([
+                "gh", "release", "download", release["tag_name"], "--repo", REPOSITORY,
+                "--dir", str(folder), "--pattern", name, "--clobber",
+            ], check=True, stdout=subprocess.DEVNULL)
+    names = verify_assets(folder, release, version)
+    if args.mode == "assets":
+        print(f"GitHub {release['tag_name']}: both archives and checksum manifest verified")
+        return
+    mod = nexus(f"/v3/games/valheim/mods/{MOD_PAGE_ID}")["data"]
+    if str(mod["game_scoped_id"]) != MOD_PAGE_ID or mod.get("name") != "ValheimOne":
+        raise ValueError("Unexpected Nexus mod identity")
+    mod_id = str(mod["id"])
+    if not re.fullmatch(r"[A-Za-z0-9-]+", mod_id):
+        raise ValueError("Unexpected Nexus mod ID")
+    files = select_files(nexus(f"/v3/mods/{mod_id}/files")["data"]["mod_files"])
+    outputs = {"version": version, "mod_id": mod_id, "notes": release["body"]}
+    for kind, filename in zip(["plugin", "full"], names):
+        versions = nexus(f"/v3/mod-files/{files[kind]}/versions")["data"]["versions"]
+        current = existing_version(versions, version)
+        outputs[kind + "_id"] = files[kind]
+        outputs[kind + "_upload"] = "false" if current else "true"
+        if current:
+            verify_indexed_hash(folder, filename, current)
+            if bool(current.get("is_primary")) != (kind == "plugin"):
+                raise ValueError("Plugin-only must be the primary Nexus download")
+        elif args.mode == "verify":
+            raise ValueError(f"Nexus {kind} version is missing")
+        print(f"Nexus {kind}: {'present and hash-index verified' if current else 'upload required'}")
+    if args.mode == "verify":
+        details = nexus(f"/v1/games/valheim/mods/{MOD_PAGE_ID}.json")
+        if details.get("version") != version:
+            raise ValueError("Nexus page version does not match GitHub Latest")
+        changelogs = nexus(f"/v1/games/valheim/mods/{MOD_PAGE_ID}/changelogs.json")
+        if version not in changelogs:
+            raise ValueError("Nexus release changelog is missing")
+        print("Nexus versions, archive index, primary download, page version and changelog verified")
+        print("A metadata match is not scan clearance. Check both public download buttons for quarantine.")
+    write_outputs(outputs)
+
+
+if __name__ == "__main__":
+    try:
+        main()
+    except (RuntimeError, ValueError, KeyError, OSError, subprocess.CalledProcessError) as error:
+        # Do not include API response bodies, request headers, or credentials in CI logs.
+        print(f"Nexus release check failed: {error}", file=sys.stderr)
+        sys.exit(1)

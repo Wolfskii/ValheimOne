@@ -1,0 +1,106 @@
+name: Nexus release mirror
+
+'on':
+  push:
+    paths: ['.github/workflows/nexus.yml', 'tools/ci/*nexus*']
+  pull_request:
+    paths: ['.github/workflows/nexus.yml', 'tools/ci/*nexus*']
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      upload:
+        description: Mirror missing files from the latest published stable release
+        type: boolean
+        default: false
+  schedule:
+    - cron: '23 */6 * * *'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: nexus-release-mirror
+  cancel-in-progress: false
+
+jobs:
+  checks:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - run: python3 tools/ci/test-nexus-release.py
+
+  mirror:
+    needs: checks
+    if: github.repository == 'humangenome/ValheimOne' && (github.event_name == 'workflow_dispatch' || github.event_name == 'schedule' || (github.event_name == 'release' && github.event.release.prerelease == false))
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      GH_TOKEN: ${{ github.token }}
+      NEXUSMODS_API_KEY: ${{ secrets.NEXUSMODS_API_KEY }}
+      RELEASE_TAG: ${{ github.event.release.tag_name }}
+    steps:
+      - name: Check out release tooling
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          persist-credentials: false
+
+      - name: Prepare exact GitHub assets and inspect Nexus file versions
+        id: prepare
+        run: python3 tools/ci/nexus-release.py prepare --directory "$RUNNER_TEMP/nexus-release"
+
+      - name: Mirror plugin-only archive
+        if: steps.prepare.outputs.plugin_upload == 'true' && (github.event_name == 'release' || inputs.upload == true)
+        uses: Nexus-Mods/upload-action@c96019556046053aa26044b44396cd38929daf23
+        with:
+          api_key: ${{ secrets.NEXUSMODS_API_KEY }}
+          file_id: ${{ steps.prepare.outputs.plugin_id }}
+          filename: ${{ runner.temp }}/nexus-release/ValheimOne-${{ steps.prepare.outputs.version }}.zip
+          version: ${{ steps.prepare.outputs.version }}
+          display_name: ValheimOne ${{ steps.prepare.outputs.version }}
+          description: ${{ steps.prepare.outputs.notes }}
+          category: main
+          archive_existing_version: false
+          primary_mod_manager_download: true
+          allow_mod_manager_download: true
+          show_requirements_pop_up: true
+          update_mod_version: true
+          mod_id: ${{ steps.prepare.outputs.mod_id }}
+          changelog: ${{ steps.prepare.outputs.notes }}
+
+      - name: Mirror Full archive
+        if: steps.prepare.outputs.full_upload == 'true' && (github.event_name == 'release' || inputs.upload == true)
+        uses: Nexus-Mods/upload-action@c96019556046053aa26044b44396cd38929daf23
+        with:
+          api_key: ${{ secrets.NEXUSMODS_API_KEY }}
+          file_id: ${{ steps.prepare.outputs.full_id }}
+          filename: ${{ runner.temp }}/nexus-release/ValheimOne-full-${{ steps.prepare.outputs.version }}.zip
+          version: ${{ steps.prepare.outputs.version }}
+          display_name: ValheimOne Full ${{ steps.prepare.outputs.version }}
+          description: ${{ steps.prepare.outputs.notes }}
+          category: main
+          archive_existing_version: false
+          primary_mod_manager_download: false
+          allow_mod_manager_download: false
+          show_requirements_pop_up: false
+          update_mod_version: false
+
+      - name: Verify Nexus version and archive readback
+        run: python3 tools/ci/nexus-release.py verify --directory "$RUNNER_TEMP/nexus-release"
+
+      - name: Write distribution status
+        if: always()
+        env:
+          JOB_STATUS: ${{ job.status }}
+        run: |
+          {
+            echo '## Nexus release mirror'
+            echo "Status: $JOB_STATUS"
+            echo 'Listing: https://www.nexusmods.com/valheim/mods/3571?tab=files'
+            echo 'Check both public download buttons for scan/quarantine status before closing the release.'
+            echo 'If Nexus blocks a file, retain it for moderator review; do not repeatedly upload it.'
+          } >> "$GITHUB_STEP_SUMMARY"

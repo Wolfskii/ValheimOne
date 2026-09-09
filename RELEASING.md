@@ -6,6 +6,8 @@ Pushing a `v*` tag runs the **Release** workflow (`.github/workflows/release.yml
 
 Steps 1–8 are the local release checklist. The workflow repeats the automatable checks in step 9; the local contract-pass record and provenance row must both be committed before tagging.
 
+After publishing on GitHub, complete step 10. Nexus must always match the latest public GitHub release; a GitHub-only publication is not a completed distribution release.
+
 ## 1. Version bump
 
 `src/ValheimOne/Networking/VersionInfo.cs` → `PluginVersion` is the single source of truth; `tools/package-release.sh` reads the version from it. Keep `<Version>`/`<AssemblyVersion>`/`<FileVersion>` in `src/ValheimOne/ValheimOne.csproj` in sync, and move the `[Unreleased]` items in `CHANGELOG.md` under the new version heading.
@@ -145,3 +147,21 @@ gh release create v<version> --draft --title "ValheimOne <version>" \
   artifacts/release/ValheimOne-full-<version>.zip \
   artifacts/release/SHA256SUMS-<version>.txt
 ```
+
+## 10. Nexus distribution
+
+The [Nexus listing](https://www.nexusmods.com/valheim/mods/3571) must carry the same plugin-only and Full archives as GitHub Latest, with the same version and release notes. Never rebuild or repackage a Nexus-only variant.
+
+The **Nexus release mirror** workflow uses the official Nexus Mods upload action, pinned to a reviewed commit. It downloads the already-published GitHub assets, checks their SHA-256 values and sizes, resolves the two existing Nexus file groups, and uploads only missing versions. Plugin-only stays the primary mod-manager download with its requirements popup; Full stays a secondary manual download. Previous versions are retained until the new downloads pass their scans.
+
+Set the repository secret `NEXUSMODS_API_KEY` using an author-owned key from [Nexus API settings](https://www.nexusmods.com/settings/api-keys). Never place keys, browser cookies or session tokens in source. Missing credentials fail the workflow visibly.
+
+Publishing a stable release triggers synchronization. A manual recovery run supports `upload=true`; the default manual run and the six-hour scheduled checks are read-only. Run a read-only check first when configuring the integration. Both paths reject a stale release event that would downgrade Nexus and refuse to duplicate a version already present there. A delayed hash index or partial upload remains a failed verification, not permission to upload the same file repeatedly.
+
+Before calling a release complete:
+
+- Verify the workflow passed: both versions, Nexus's archive hash index, the primary download, the page version and the changelog agree with GitHub Latest.
+- Open the public Files page and verify both download buttons are usable. API metadata and a successful upload do not prove virus-scan clearance. Download both files through the normal authorized flow and compare SHA-256 with the release manifest.
+- Confirm the plugin file still requires BepInEx and Full does not require installing the loader twice. The upload API's requirements-popup flag does not itself create a dependency.
+- Check that the description, install requirements, permissions and media still match the released product. Gameplay modules marked Synced require ValheimOne on each participating PC; the map and server tools do not.
+- If a file is quarantined, preserve it and request [Nexus moderator review](https://help.nexusmods.com/article/117-why-has-my-mod-been-quarantined) with the public source, build instructions and release checksums. Do not call a quarantine harmless without evidence or delete it to evade review. Record the blocker and leave distribution verification incomplete until downloads work.
