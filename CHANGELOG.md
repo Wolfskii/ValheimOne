@@ -4,6 +4,12 @@ All notable changes to ValheimOne will be documented in this file. This project 
 
 ## [Unreleased]
 
+## [0.13.5] - 2026-09-09
+
+### Fixed
+
+- On an open public map, switching `FogHideUnexplored` on or off (or turning fog off) now refetches region names and spawn/trader markers at once, so what is drawn matches the new treatment without a reload. 0.13.4 only refetched when the fog revision advanced.
+
 ## [0.13.4] - 2026-09-09
 
 ### Added

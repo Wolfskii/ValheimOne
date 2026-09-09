@@ -16873,20 +16873,21 @@
     }
 
     // Under the solid cover the server drops unexplored region names and spawn/trader
-    // markers from the public feeds, so a newer fog revision means newly revealed
-    // ground: refetch both so they appear without a page reload.
+    // markers from the public feeds. Refetch both whenever that changes what is served:
+    // the cover switching on or off while the page is open, or a newer fog revision
+    // under the cover (newly revealed ground). Feeds not loaded yet load under the
+    // current state on their own, so nothing is fetched twice at startup.
     function refreshHiddenFogFeeds() {
-        if (!fogStatus.hide) {
-            fogHiddenRevision = null;
+        var key = fogStatus.hide && fogAvailable ? fogStatus.revision : null;
+        if (key === fogHiddenRevision) {
             return;
         }
-        var revisionKey = fogStatus.revision;
-        if (fogHiddenRevision === revisionKey) {
+        var wasHidden = fogHiddenRevision !== null;
+        fogHiddenRevision = key;
+        if (!map || lastPoiRequestedView === null) {
             return;
         }
-        var first = fogHiddenRevision === null;
-        fogHiddenRevision = revisionKey;
-        if (first || !map) {
+        if (key === null && !wasHidden) {
             return;
         }
         regionsRequested = false;
@@ -16934,13 +16935,13 @@
             fogLoadSequence++;
             fogRequestedRevision = null;
             fogDisplayedRevision = null;
-            fogHiddenRevision = null;
             if (fogOverlay) {
                 setLayerVisible(fogOverlay, false);
                 fogOverlay = null;
             }
             hideFogCover();
             syncMinimapFog(null);
+            refreshHiddenFogFeeds();
             syncLayerVisibility();
             return;
         }
