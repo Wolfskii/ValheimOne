@@ -36,7 +36,7 @@
 
 Your whole world in a browser, drawn from the server seed and updating in real time. Players, ships, carts, portals, tombstones, wards and beds move as they happen. Fog-of-war can mirror exactly what your vikings have actually charted.
 
-![ValheimOne Live Map, admin view](docs/screenshots/livemap-admin.png)
+![ValheimOne Live Map, admin view](docs/screenshots/valheimone-live-map-20260909-r3.png)
 
 Turn on the heatmap to see where everyone has been over the last day or week, open World Timelapse to scrub through explored fog, base growth and aggregate movement history, or view the Sagas leaderboard for playtime, deaths and distance travelled.
 
@@ -60,9 +60,9 @@ Click any dungeon entrance and get a top-down room schematic read straight from 
 
 ### 📖 Codex of Items
 
-Every one of roughly 1,084 items, searchable and filterable: weight, stack size, tiers, damage, armour, full recipes with station requirements, what drops it, and what it is used to make. Jump straight from an ingredient to everything that needs it.
+Searchable, filterable items and recipes: weight, stack size, tiers, damage, armour, full recipes with station requirements, what drops it, and what it is used to make. Jump straight from an ingredient to everything that needs it.
 
-![ValheimOne Codex of Items](docs/screenshots/codex-of-items.png)
+![ValheimOne Codex of Items](docs/screenshots/valheimone-codex-20260909-r3.png)
 
 <a id="console"></a>
 
@@ -70,7 +70,7 @@ Every one of roughly 1,084 items, searchable and filterable: weight, stack size,
 
 A live server log and a command box with history and autocomplete, running whitelisted commands through the game's own console. Kick, ban, save the world, or schedule a graceful shutdown that warns players on the way down.
 
-![ValheimOne web admin console](docs/screenshots/console-tab.png)
+![ValheimOne web admin console](docs/screenshots/valheimone-console-20260909-r3.png)
 
 ### ⚙️ Server Rules That Actually Stick
 
@@ -102,7 +102,7 @@ You need a Valheim Dedicated Server with the Valheim-compatible [BepInEx pack](h
 2. Stop the server and extract the ZIP into its root folder. The plugin belongs at `BepInEx/plugins/ValheimOne.dll`. Preserve your existing `BepInEx/config/valheimone.cfg` when updating; do not replace it with the packaged defaults. On Linux, use the Full pack's `start_server_bepinex.sh` with your usual server arguments.
 3. Start once to generate any missing config, then stop before the initial configuration. In the existing `[LiveMap]` section of `BepInEx/config/valheimone.cfg`, set `Enabled = true`, choose a long unique `AccessToken`, and set `PublicView = false` while configuring access. The live map is disabled by default.
 4. Start the server and wait for the world to load. The default map port is TCP `8790`. On a trusted network, open `http://your-server-ip:8790/?token=YOUR_ADMIN_TOKEN` with your own values. Use an HTTPS reverse proxy for authenticated access over the Internet.
-5. Set `ConsoleEnabled = true` in `[LiveMap]` if you want browser commands. For sharing, configure a separate `ShareToken` or enable the tokenless `PublicView`, then choose the fog and public layers. Keep your admin token private.
+5. Set `ConsoleEnabled = true` in `[LiveMap]` if you want browser commands. Set `EntityLayer = true` to collect the optional ships, carts and portals layer. For sharing, configure a separate `ShareToken` or enable the tokenless `PublicView`, then choose the fog and public layers. Keep your admin token private.
 
 ```text
 Valheim Dedicated Server/
