@@ -143,18 +143,18 @@ internal static class VoCommands
 
     private static void RegisterTerminalCommand()
     {
-        _ = new Terminal.ConsoleCommand(
+        // The ConsoleCommand constructor gained a parameter in Valheim 1.0, so it is
+        // resolved by shape and filled by name instead of bound at compile time.
+        Terminal.ConsoleCommand? command = GameCompat.TryCreateConsoleCommand(
             "vo",
             "ValheimOne server administration; use 'vo help' for commands",
             Run,
-            isCheat: false,
-            isNetwork: false,
             onlyServer: true,
-            isSecret: false,
-            allowInDevBuild: false,
-            optionsFetcher: VoCommandRegistry.GetSubcommandNames,
-            alwaysRefreshTabOptions: false,
-            remoteCommand: false);
+            VoCommandRegistry.GetSubcommandNames);
+        if (command == null)
+        {
+            throw new MissingMethodException(typeof(Terminal.ConsoleCommand).FullName, ".ctor");
+        }
     }
 
     private static void Run(Terminal.ConsoleEventArgs args)

@@ -4,8 +4,8 @@ namespace ValheimOne.Networking;
 
 public static class VersionInfo
 {
-    public const string PluginVersion = "0.13.2";
-    public const string SupportedGameVersion = "0.221.12";
+    public const string PluginVersion = "0.13.3";
+    public const string SupportedGameVersion = "1.0.7";
 
     // Bump monotonically whenever the network payload or synced-config contract changes incompatibly.
     public const int NetworkConfigSchema = 1;

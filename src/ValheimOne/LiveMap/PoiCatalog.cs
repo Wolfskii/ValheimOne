@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using UnityEngine;
+using ValheimOne.Infrastructure;
 
 namespace ValheimOne.LiveMap;
 
@@ -34,9 +35,19 @@ internal sealed class PoiCatalog
         return _counts.TryGetValue(group, out int count) ? count : 0;
     }
 
-    public static PoiCatalog Build(ZoneSystem zoneSystem)
+    // Returns Empty (and reports it) when the location table cannot be read on this
+    // game build; the map still starts without its points of interest.
+    public static PoiCatalog Build(ZoneSystem zoneSystem, ModLogger log)
     {
-        Dictionary<Vector2i, ZoneSystem.LocationInstance> instances = zoneSystem.m_locationInstances;
+        var instances = new List<KeyValuePair<Vector2i, ZoneSystem.LocationInstance>>();
+        if (!GameCompat.TryGetLocationInstances(zoneSystem, instances))
+        {
+            log.Warning(
+                "[LiveMap] points of interest are unavailable on this Valheim build; " +
+                "the location table could not be read. The map runs without them.");
+            return Empty;
+        }
+
         var locations = new List<PoiSnapshot>(instances.Count);
         var servedPois = new List<PoiSnapshot>(Math.Min(instances.Count, 2048));
         Dictionary<string, int> counts = CreateEmptyCounts();

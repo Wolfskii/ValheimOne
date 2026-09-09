@@ -31,6 +31,8 @@ internal sealed class DungeonRegistry
     private readonly List<DungeonLocation> _locations = new List<DungeonLocation>();
     private readonly List<DungeonLocation> _pendingLocations = new List<DungeonLocation>();
     private readonly List<ZDO> _sectorObjects = new List<ZDO>();
+    private readonly List<KeyValuePair<Vector2i, ZoneSystem.LocationInstance>> _locationInstances =
+        new List<KeyValuePair<Vector2i, ZoneSystem.LocationInstance>>();
     private volatile DungeonRegistrySnapshot _snapshot = DungeonRegistrySnapshot.Empty;
     private volatile DungeonBoundsIndexEntry[] _bounds = Array.Empty<DungeonBoundsIndexEntry>();
     private float _nextRefresh;
@@ -39,6 +41,7 @@ internal sealed class DungeonRegistry
     private bool _initialScanComplete;
     private bool _scanning;
     private bool _scanWarningLogged;
+    private bool _locationsWarningLogged;
 
     public DungeonRegistry(ZoneSystem zoneSystem, ModLogger log)
     {
@@ -208,7 +211,10 @@ internal sealed class DungeonRegistry
         DungeonLocation location)
     {
         _sectorObjects.Clear();
-        manager.FindSectorObjects(location.Zone, 0, 0, _sectorObjects);
+        if (!GameCompat.TryFindSectorObjects(manager, location.Zone, _sectorObjects))
+        {
+            throw new MissingMethodException(typeof(ZDOMan).FullName, "FindSectorObjects");
+        }
 
         ZDO? generatorZdo = null;
         DungeonGeneratorPrefab? generatorPrefab = null;
@@ -479,8 +485,20 @@ internal sealed class DungeonRegistry
     private void RefreshLocations()
     {
         _locations.Clear();
-        foreach (KeyValuePair<Vector2i, ZoneSystem.LocationInstance> pair in
-                 _zoneSystem.m_locationInstances)
+        if (!GameCompat.TryGetLocationInstances(_zoneSystem, _locationInstances))
+        {
+            if (!_locationsWarningLogged)
+            {
+                _locationsWarningLogged = true;
+                _log.Warning(
+                    "[LiveMap] dungeon locations are unavailable on this Valheim build; " +
+                    "the location table could not be read.");
+            }
+
+            return;
+        }
+
+        foreach (KeyValuePair<Vector2i, ZoneSystem.LocationInstance> pair in _locationInstances)
         {
             ZoneSystem.LocationInstance instance = pair.Value;
             ZoneSystem.ZoneLocation? location = instance.m_location;

@@ -53,6 +53,7 @@ internal sealed class LiveMapBehaviour : MonoBehaviour
     private bool _poiCatalogBuilt;
     private bool _joinCodeReadFailureLogged;
     private bool _started;
+    private bool _startFailed;
     private bool _stopped;
     private volatile bool _idle;
 
@@ -160,6 +161,9 @@ internal sealed class LiveMapBehaviour : MonoBehaviour
                 StopServices(false);
             }
 
+            // Toggling the section off and on again is the one deliberate way to retry
+            // after a hard start failure.
+            _startFailed = false;
             return;
         }
 
@@ -167,7 +171,11 @@ internal sealed class LiveMapBehaviour : MonoBehaviour
 
         if (!_started)
         {
-            TryStart();
+            if (!_startFailed)
+            {
+                TryStart();
+            }
+
             return;
         }
 
@@ -241,6 +249,40 @@ internal sealed class LiveMapBehaviour : MonoBehaviour
             return;
         }
 
+        // Everything below runs once. A vanilla member that does not resolve on this
+        // game build used to throw out of Update every frame (thousands of log lines a
+        // minute, fleet-wide, after Valheim 1.0); now it is reported once, the live map
+        // marks itself unavailable, and nothing else in the plugin is affected.
+        try
+        {
+            StartServices(config, log, network, generator, zoneSystem, objectDb, netScene, world);
+        }
+        catch (Exception exception)
+        {
+            _startFailed = true;
+            StopServices(false);
+            log.Error(
+                "[LiveMap] could not start on this Valheim build and is disabled until the " +
+                "server restarts or the [LiveMap] section is toggled; every other feature is " +
+                $"unaffected. {exception.GetType().Name}: {exception.Message}");
+        }
+    }
+
+    private void StartServices(
+        LiveMapConfig config,
+        ModLogger log,
+        ZNet network,
+        WorldGenerator generator,
+        ZoneSystem zoneSystem,
+        ObjectDB objectDb,
+        ZNetScene netScene,
+        World world)
+    {
+        if (!GameCompat.IsBiomeHeightAvailable)
+        {
+            throw new MissingMethodException(typeof(WorldGenerator).FullName, "GetBiomeHeight");
+        }
+
         if (config.ConsoleEnabled && _logRingBuffer == null)
         {
             try
@@ -280,7 +322,7 @@ internal sealed class LiveMapBehaviour : MonoBehaviour
 
         if (!_poiCatalogBuilt)
         {
-            PoiCatalog poiCatalog = PoiCatalog.Build(zoneSystem);
+            PoiCatalog poiCatalog = PoiCatalog.Build(zoneSystem, log);
             _poiCatalog = poiCatalog;
             _poiCatalogBuilt = true;
             log.Info(

@@ -476,7 +476,7 @@ internal sealed class WorldMapRenderer
                 }
 
                 Heightmap.Biome biome = _generator.GetBiome(worldX, worldZ);
-                float height = _generator.GetBiomeHeight(biome, worldX, worldZ, out Color mask);
+                float height = GameCompat.GetBiomeHeight(_generator, biome, worldX, worldZ, out Color mask);
                 heights[pixelIndex] = height;
 
                 bool isLand = height >= MapShading.WaterLevel;
@@ -629,7 +629,7 @@ internal sealed class WorldMapRenderer
                 }
 
                 Heightmap.Biome biome = _generator.GetBiome(worldX, worldZ);
-                float height = _generator.GetBiomeHeight(biome, worldX, worldZ, out Color mask);
+                float height = GameCompat.GetBiomeHeight(_generator, biome, worldX, worldZ, out Color mask);
                 heights[pixelIndex] = height;
 
                 bool isLand = height >= MapShading.WaterLevel;

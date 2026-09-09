@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using HarmonyLib;
 using ValheimOne.Configuration;
+using ValheimOne.Infrastructure;
 
 namespace ValheimOne.Modules;
 
@@ -63,10 +64,17 @@ public sealed class PortalsModule : IFeatureModule
             getHoverText,
             postfix: new HarmonyMethod(typeof(PortalsModule), nameof(GetHoverTextPostfix)));
 
+        // Valheim 1.0 gave IsTeleportable a `bool allowAllItems` parameter (the portal
+        // passes its own m_allowAllItems through it); 0.221 has the parameterless form.
+        // The postfix only touches __result, so it fits either.
         var isTeleportable = AccessTools.Method(
-            typeof(Inventory),
-            nameof(Inventory.IsTeleportable),
-            Type.EmptyTypes)
+                typeof(Inventory),
+                nameof(Inventory.IsTeleportable),
+                new[] { typeof(bool) })
+            ?? AccessTools.Method(
+                typeof(Inventory),
+                nameof(Inventory.IsTeleportable),
+                Type.EmptyTypes)
             ?? throw new MissingMethodException(nameof(Inventory), nameof(Inventory.IsTeleportable));
         harmony.Patch(
             isTeleportable,
@@ -92,7 +100,7 @@ public sealed class PortalsModule : IFeatureModule
             return true;
         }
 
-        player.Message(MessageHud.MessageType.Center, "Portals are disabled.");
+        GameCompat.TryMessage(player, MessageHud.MessageType.Center, "Portals are disabled.");
         return false;
     }
 

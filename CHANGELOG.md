@@ -4,6 +4,18 @@ All notable changes to ValheimOne will be documented in this file. This project 
 
 ## [Unreleased]
 
+## [0.13.3] - 2026-09-09
+
+### Fixed
+
+- ValheimOne runs on Valheim 1.0 (1.0.7, dedicated-server build 25185644). Five vanilla members changed shape in 1.0 and each took a feature down in a different way: `ZoneSystem.m_locationInstances` is now keyed by `Vector2s` instead of `Vector2i`, so the live map threw `MissingFieldException` out of its per-frame start check and never started (the public map page answered 503 and the exception was logged every frame); `Inventory.IsTeleportable` gained a `bool allowAllItems` parameter, so the Portals module failed to patch; `ZDOMan.FindSectorObjects` now takes a `SimulationDistance`, `WorldGenerator.GetBiomeHeight` gained a trailing `bool riverPreDN`, and `Character.Message` gained a trailing `bool log`; the `Terminal.ConsoleCommand` constructor gained a parameter, which would have broken `vo` console registration. All five are now resolved at runtime through a new `GameCompat` helper that tries the 1.0 shape first and the 0.221 shape second, so one build runs on both game versions; the binary names no 1.0-only type, and its member references were verified to resolve against both game builds.
+- The live map now starts exactly once. If a vanilla member cannot be resolved on the running game build, the failure is logged a single time, the live map marks itself unavailable (until the server restarts or the `[LiveMap]` section is toggled), any partially started services are stopped, and every other feature keeps running. Previously the start routine was retried from `Update` every frame and threw each time, which produced thousands of log lines per minute per server.
+- Points of interest and dungeon locations degrade individually: when the location table cannot be read, the map runs without them and says so once, instead of failing to start.
+
+### Changed
+
+- `SupportedGameVersion` is `1.0.7`. The startup banner still reports the detected game version and warns when it differs.
+
 ## [0.13.2] - 2026-08-17
 
 ### Fixed

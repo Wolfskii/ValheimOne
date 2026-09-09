@@ -314,7 +314,7 @@ internal sealed class DetailTileRenderer
                 }
 
                 Heightmap.Biome biome = _generator.GetBiome(worldX, worldZ);
-                float height = _generator.GetBiomeHeight(biome, worldX, worldZ, out Color mask);
+                float height = GameCompat.GetBiomeHeight(_generator, biome, worldX, worldZ, out Color mask);
                 biomes[index] = biome;
                 heights[index] = height;
                 lavaMasks[index] = biome == Heightmap.Biome.AshLands ? mask.a : 0f;

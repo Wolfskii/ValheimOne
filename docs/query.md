@@ -50,7 +50,7 @@ curl http://<server-ip>:8790/api/status
 
 ```json
 {
-  "version": { "game": "0.221.12", "mod": "0.11.0", "schema": 1 },
+  "version": { "game": "1.0.7", "mod": "0.13.3", "schema": 1 },
   "generatedUtc": "2026-07-22T12:00:00.000Z",
   "items": [
     {
@@ -149,7 +149,7 @@ The automatic port is the Valheim game port plus 4. Vanilla non-crossplay Valhei
 
 ### Responses
 
-- **A2S_INFO** reports the live server name; world name as the map; folder `valheim`; game `Valheim`; live peer count; configured maximum players; dedicated server type `d`; environment byte reporting the host OS (`l` Linux, `w` Windows); password flag; game version (for example, `0.221.12`); game port; keywords `valheimone,vo=<version>`; and 64-bit game ID `892970`.
+- **A2S_INFO** reports the live server name; world name as the map; folder `valheim`; game `Valheim`; live peer count; configured maximum players; dedicated server type `d`; environment byte reporting the host OS (`l` Linux, `w` Windows); password flag; game version (for example, `1.0.7`); game port; keywords `valheimone,vo=<version>`; and 64-bit game ID `892970`.
 - **A2S_PLAYER** reports connected player slots. With `PublicPlayerNames = false`, names are returned as generic `Player N` labels, matching the Live Map's privacy stance; set it to `true` to return live player names.
 
 Both A2S_INFO and A2S_PLAYER use the standard S2C_CHALLENGE flow: the responder issues a challenge for the requesting client, the client repeats the request with that challenge, and the challenge expires after 30 seconds. Wrong challenges are re-challenged; malformed and oversized (over 1400 bytes) packets are dropped without throwing.
