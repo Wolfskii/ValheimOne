@@ -5,14 +5,14 @@
 <p align="center">
   <b>Everything your Valheim dedicated server is missing.</b><br>
   A live world map you can hand to your players, a searchable item codex, a browser admin console,<br>
-  Discord alerts and server-enforced rules &mdash; server-side only, on a completely vanilla client.
+  Discord alerts and optional gameplay rules. The map and admin tools work with vanilla clients.
 </p>
 
 <p align="center">
   <a href="LICENSE"><img alt="License: MIT" src="https://img.shields.io/badge/License-MIT-c9a959?style=for-the-badge"></a>
   <a href="https://github.com/BepInEx/BepInEx"><img alt="BepInEx 5.4.x" src="https://img.shields.io/badge/BepInEx-5.4.x-2f80ed?style=for-the-badge"></a>
   <a href="https://store.steampowered.com/app/892970/"><img alt="Valheim Dedicated Server" src="https://img.shields.io/badge/Valheim-Dedicated_Server-1b2838?style=for-the-badge&logo=steam&logoColor=white"></a>
-  <a href="#features"><img alt="Client Mods: None" src="https://img.shields.io/badge/Client_Mods-None_Required-2ea043?style=for-the-badge"></a>
+  <a href="#features"><img alt="Map and console: vanilla clients" src="https://img.shields.io/badge/Map_and_Console-Vanilla_Clients-2ea043?style=for-the-badge"></a>
 </p>
 
 <p align="center">
@@ -44,7 +44,7 @@ Turn on the heatmap to see where everyone has been over the last day or week, op
 
 ### 🔗 Share It With Your Players
 
-Three views, and you decide who gets which. **Admin** sees everything. **Shared** shows live players and every layer but never grants a single admin action. **Public** is read-only and fog-covered, safe to post in your Discord.
+Three views, and you decide who gets which. **Admin** sees everything. **Shared** shows live players and every layer but never grants a single admin action. **Public** is read-only, with its own fog and public-layer settings. Check the tokenless link before sharing it. With `FogMode = trails` or `explored`, enable `FogHideUnexplored = true` for an opaque cover and to withhold unexplored region names, spawn and trader markers. The default fog is a translucent tint; Admin and Shared views still show the full terrain.
 
 ![ValheimOne public map with explored fog](docs/screenshots/livemap-public-fog.png)
 
@@ -76,7 +76,7 @@ A live server log and a command box with history and autocomplete, running white
 
 Twenty-six opt-in modules covering carry weight, stamina, food, drops, gathering, build rules, portals, taming, raids, production speeds and more. Everything is off until you turn it on, and most values hot-reload without a restart.
 
-See [docs/gameplay-modules.md](docs/gameplay-modules.md) for the full list.
+Modules marked **Synced** need ValheimOne on each participating PC; the server then sends those players its settings. Console players cannot install those client mods. The live map, browser console and alerts do not require a client plugin. See [docs/gameplay-modules.md](docs/gameplay-modules.md) for each module's scope.
 
 ### 🔔 Discord Alerts
 
@@ -94,26 +94,24 @@ See [docs/query.md](docs/query.md).
 
 ## Installation
 
-Two ways in. Pick one.
+### Install on your server
 
-### 🚀 Option 1 &mdash; Rent a server, skip all of it
+You need a Valheim Dedicated Server with the Valheim-compatible [BepInEx pack](https://thunderstore.io/c/valheim/p/denikson/BepInExPack_Valheim/).
 
-[**Get a Valheim server from SurvivalServers**](https://www.survivalservers.com/services/game_servers/valheim/?utm_source=github&utm_medium=readme&utm_campaign=valheim_one) and ValheimOne is **already installed, already configured and updated for you automatically**. No BepInEx, no file uploads, no config editing. Your map, console and share links are live the moment the server boots, wired straight into the control panel.
-
-### 🔧 Option 2 &mdash; Install it yourself
-
-You need a Valheim Dedicated Server with [BepInEx 5.4.x](https://github.com/BepInEx/BepInEx).
-
-1. Download the latest zip from [Releases](https://github.com/HumanGenome/ValheimOne/releases). Take the plugin-only package if you already run BepInEx, or the bundled package for a fresh install.
-2. Drop `ValheimOne.dll` into `BepInEx/plugins/`.
-3. Start the server. ValheimOne writes `BepInEx/config/valheimone.cfg` on first boot.
+1. Download the current [GitHub release](https://github.com/HumanGenome/ValheimOne/releases/latest). Use the plugin-only ZIP if BepInEx is installed, or the Full ZIP for a fresh setup. The [Nexus listing](https://www.nexusmods.com/valheim/mods/3571) is another download channel; check that its version matches GitHub.
+2. Stop the server and extract the ZIP into its root folder. The plugin belongs at `BepInEx/plugins/ValheimOne.dll`. Preserve your existing `BepInEx/config/valheimone.cfg` when updating; do not replace it with the packaged defaults. On Linux, use the Full pack's `start_server_bepinex.sh` with your usual server arguments.
+3. Start once to generate any missing config, then stop before the initial configuration. In the existing `[LiveMap]` section of `BepInEx/config/valheimone.cfg`, set `Enabled = true`, choose a long unique `AccessToken`, and set `PublicView = false` while configuring access. The live map is disabled by default.
+4. Start the server and wait for the world to load. The default map port is TCP `8790`. On a trusted network, open `http://your-server-ip:8790/?token=YOUR_ADMIN_TOKEN` with your own values. Use an HTTPS reverse proxy for authenticated access over the Internet.
+5. Set `ConsoleEnabled = true` in `[LiveMap]` if you want browser commands. For sharing, configure a separate `ShareToken` or enable the tokenless `PublicView`, then choose the fog and public layers. Keep your admin token private.
 
 ```text
 Valheim Dedicated Server/
 └── BepInEx/
-    └── plugins/
-        └── ValheimOne.dll
+    ├── config/valheimone.cfg
+    └── plugins/ValheimOne.dll
 ```
+
+> **Official Hosting:** ValheimOne is included with [Valheim server hosting from SurvivalServers](https://www.survivalservers.com/services/game_servers/valheim/?utm_source=github&utm_medium=readme&utm_campaign=valheim_one), with map and console controls in the control panel. You can also install the free mod on your own dedicated server using the steps above.
 
 Building from source is `./build.sh`; see [RELEASING.md](RELEASING.md) for packaging.
 
