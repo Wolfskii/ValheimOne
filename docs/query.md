@@ -22,7 +22,7 @@ curl http://<server-ip>:8790/api/status
     "textureSize": 2048,
     "pixelSize": 12,
     "worldRadius": 10500,
-    "fog": { "mode": "off", "revision": 0, "size": 512 }
+    "fog": { "mode": "off", "revision": 0, "size": 512, "hide": false }
   }
 }
 ```
@@ -38,6 +38,7 @@ curl http://<server-ip>:8790/api/status
 | `view` | `admin`, `shared`, or `public` — which view level answered the request. |
 | `console` | `true` only for admin-token requests when the web console is enabled. |
 | `map.state` / `map.progress` | World-render lifecycle for the map front-end. |
+| `map.fog` | Fog treatment the caller's view receives: `mode` is `off`, `trails` or `explored` (always `off` above the public tier), `revision` advances as ground is revealed, and `hide` is `true` when `FogHideUnexplored` turns the public cover opaque and withholds unexplored region names and spawn/trader markers. |
 
 ## Access rules
 

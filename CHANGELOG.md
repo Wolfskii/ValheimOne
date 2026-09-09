@@ -4,6 +4,17 @@ All notable changes to ValheimOne will be documented in this file. This project 
 
 ## [Unreleased]
 
+## [0.13.4] - 2026-09-09
+
+### Added
+
+- `[LiveMap] FogHideUnexplored` (default `false`): with fog on, the public view can now hide unexplored ground completely instead of ghosting it. The fog image becomes an opaque cover (slate on the default and topographic basemaps, blank parchment on Old Chart) with only the explored side of each boundary feathered, so nothing shows through; the public regions feed drops region names whose centre is unexplored; and the public points-of-interest feeds drop spawn and trader markers that nobody has reached yet, with group counts reporting only what is served. `/api/status` reports the treatment as `map.fog.hide`, and the map page keys its fog image cache on it so a saved change shows on the next status poll rather than after the day-long image cache expires. Shared and admin views are unaffected; the setting does nothing while `FogMode` is `off`.
+
+### Fixed
+
+- The minimap overview showed the unfogged world on fogged public views. It now mirrors the fog image whenever the main map is fogged.
+- With the solid cover, region names and spawn/trader markers revealed by exploration now appear on open public maps as the fog revision advances, without a reload.
+
 ## [0.13.3] - 2026-09-09
 
 ### Fixed

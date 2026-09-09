@@ -84,8 +84,10 @@ internal sealed class LiveMapHttpServer
     private Thread? _listenerThread;
     private byte[]? _fogPng;
     private long _fogPngRevision = -1;
+    private bool _fogPngSolid;
     private byte[]? _chartFogPng;
     private long _chartFogPngRevision = -1;
+    private bool _chartFogPngSolid;
     private long _exploredPctRevision = -1;
     private double _exploredPctValue;
     private long _webPinWriteLastPruneTicks;
@@ -466,7 +468,7 @@ internal sealed class LiveMapHttpServer
             }
             else if (isGet && path == "/api/regions")
             {
-                ServeRegions(response);
+                ServeRegions(response, viewLevel);
             }
             else if (isGet && path == "/api/pins")
             {
@@ -936,6 +938,7 @@ internal sealed class LiveMapHttpServer
         string chartProgress = JsonWriter.Number(_renderer.GetStyleProgress(MapStyle.Chart));
         string chartRevision = _renderer.GetStyleRevision(MapStyle.Chart);
         string fogMode = GetEffectiveFogMode(viewLevel);
+        bool fogHide = GetEffectiveFogHide(viewLevel);
         FogMaskSnapshot fogSnapshot = _fogTracker.Snapshot;
         long fogRevision = fogMode == "off" ? 0 : fogSnapshot.Revision;
         double exploredPct = GetExploredPercentage(fogSnapshot);
@@ -1010,6 +1013,7 @@ internal sealed class LiveMapHttpServer
         json.Append("\"mode\":").Append(JsonWriter.Quote(fogMode));
         json.Append(",\"revision\":").Append(fogRevision.ToString(CultureInfo.InvariantCulture));
         json.Append(",\"size\":").Append(FogTracker.Size.ToString(CultureInfo.InvariantCulture));
+        json.Append(",\"hide\":").Append(fogHide ? "true" : "false");
         json.Append("}}");
         json.Append(",\"unixMs\":").Append(snapshot.UnixMs.ToString(CultureInfo.InvariantCulture));
         json.Append(",\"snapshotAgeMs\":").Append(snapshotAgeMs.ToString(CultureInfo.InvariantCulture));
@@ -1044,6 +1048,7 @@ internal sealed class LiveMapHttpServer
         key.Append(chartProgress).Append('|');
         key.Append(chartRevision).Append('|');
         key.Append(fogRevision.ToString(CultureInfo.InvariantCulture)).Append('|');
+        key.Append(fogHide ? "hide" : "ghost").Append('|');
         long lastSavedMinute = lastSavedUnixMs > 0L ? lastSavedUnixMs / 60000L : 0L;
         key.Append(lastSavedMinute.ToString(CultureInfo.InvariantCulture)).Append('|');
         key.Append(snapshotStale ? "stale" : "fresh");
@@ -3462,6 +3467,7 @@ internal sealed class LiveMapHttpServer
         IReadOnlyList<PoiSnapshot> pois = catalog.ServedPois;
         IReadOnlyList<PoiGroupDefinition> definitions = PoiGroups.All;
         FogMaskSnapshot fogSnapshot = _fogTracker.Snapshot;
+        bool hideUnexplored = GetEffectiveFogHide(viewLevel);
         long unixMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
         var json = new StringBuilder(128 + (pois.Count * 96));
         var deferredGroups = new HashSet<string>(StringComparer.Ordinal);
@@ -3483,7 +3489,9 @@ internal sealed class LiveMapHttpServer
                 json.Append(',');
             }
 
-            int count = catalog.GetCount(definition.Key);
+            int count = hideUnexplored
+                ? CountExploredPois(pois, definition.Key, fogSnapshot)
+                : catalog.GetCount(definition.Key);
             int cap = 0;
             bool truncated = false;
             if (string.Equals(definition.Key, "ghosts", StringComparison.Ordinal))
@@ -3558,6 +3566,11 @@ internal sealed class LiveMapHttpServer
                 continue;
             }
 
+            if (hideUnexplored && !FogTracker.IsExplored(fogSnapshot, poi.X, poi.Z))
+            {
+                continue;
+            }
+
             if (deferredGroups.Contains(poi.Group))
             {
                 continue;
@@ -3612,7 +3625,7 @@ internal sealed class LiveMapHttpServer
                 return;
             }
 
-            ServeLocationPoiGroup(response, definition);
+            ServeLocationPoiGroup(response, definition, GetEffectiveFogHide(viewLevel));
             return;
         }
 
@@ -3752,12 +3765,15 @@ internal sealed class LiveMapHttpServer
 
     private void ServeLocationPoiGroup(
         HttpListenerResponse response,
-        PoiGroupDefinition definition)
+        PoiGroupDefinition definition,
+        bool hideUnexplored)
     {
         PoiCatalog catalog = _getPoiCatalog();
         IReadOnlyList<PoiSnapshot> catalogPois = catalog.ServedPois;
-        int count = catalog.GetCount(definition.Key);
         FogMaskSnapshot fogSnapshot = _fogTracker.Snapshot;
+        int count = hideUnexplored
+            ? CountExploredPois(catalogPois, definition.Key, fogSnapshot)
+            : catalog.GetCount(definition.Key);
         var json = new StringBuilder(128 + (count * 96));
         json.Append("{\"group\":").Append(JsonWriter.Quote(definition.Key));
         json.Append(",\"label\":").Append(JsonWriter.Quote(definition.Label));
@@ -3768,6 +3784,12 @@ internal sealed class LiveMapHttpServer
         {
             PoiSnapshot poi = catalogPois[index];
             if (!string.Equals(poi.Group, definition.Key, StringComparison.Ordinal))
+            {
+                continue;
+            }
+
+            bool explored = FogTracker.IsExplored(fogSnapshot, poi.X, poi.Z);
+            if (hideUnexplored && !explored)
             {
                 continue;
             }
@@ -3783,14 +3805,32 @@ internal sealed class LiveMapHttpServer
             json.Append(",\"x\":").Append(JsonWriter.NumberOneDecimal(poi.X));
             json.Append(",\"z\":").Append(JsonWriter.NumberOneDecimal(poi.Z));
             json.Append(",\"placed\":").Append(poi.Placed ? "true" : "false");
-            json.Append(",\"explored\":").Append(
-                FogTracker.IsExplored(fogSnapshot, poi.X, poi.Z) ? "true" : "false");
+            json.Append(",\"explored\":").Append(explored ? "true" : "false");
             json.Append('}');
             needsComma = true;
         }
 
         json.Append("]}");
         WriteJson(response, HttpStatusCode.OK, json.ToString());
+    }
+
+    private static int CountExploredPois(
+        IReadOnlyList<PoiSnapshot> pois,
+        string group,
+        FogMaskSnapshot fogSnapshot)
+    {
+        int count = 0;
+        for (int index = 0; index < pois.Count; index++)
+        {
+            PoiSnapshot poi = pois[index];
+            if (string.Equals(poi.Group, group, StringComparison.Ordinal) &&
+                FogTracker.IsExplored(fogSnapshot, poi.X, poi.Z))
+            {
+                count++;
+            }
+        }
+
+        return count;
     }
 
     private void ServeResourcePoiGroup(
@@ -3881,19 +3921,28 @@ internal sealed class LiveMapHttpServer
         WriteJson(response, HttpStatusCode.OK, json.ToString());
     }
 
-    private void ServeRegions(HttpListenerResponse response)
+    private void ServeRegions(HttpListenerResponse response, ViewLevel viewLevel)
     {
         BiomeRegionSnapshot[] regions = _renderer.Regions;
+        bool hideUnexplored = GetEffectiveFogHide(viewLevel);
+        FogMaskSnapshot fogSnapshot = hideUnexplored ? _fogTracker.Snapshot : FogMaskSnapshot.Empty;
         var json = new StringBuilder(16 + (regions.Length * 96));
         json.Append("{\"regions\":[");
+        bool needsComma = false;
         for (int index = 0; index < regions.Length; index++)
         {
-            if (index > 0)
+            BiomeRegionSnapshot region = regions[index];
+            if (hideUnexplored && !FogTracker.IsExplored(fogSnapshot, region.X, region.Z))
+            {
+                continue;
+            }
+
+            if (needsComma)
             {
                 json.Append(',');
             }
 
-            BiomeRegionSnapshot region = regions[index];
+            needsComma = true;
             json.Append('{');
             json.Append("\"name\":").Append(JsonWriter.Quote(region.Name));
             json.Append(",\"biome\":").Append(JsonWriter.Quote(region.Biome));
@@ -4451,25 +4500,32 @@ internal sealed class LiveMapHttpServer
         }
 
         FogMaskSnapshot snapshot = _fogTracker.Snapshot;
+        bool solid = GetEffectiveFogHide(viewLevel);
         byte[] png;
         lock (_fogPngLock)
         {
             if (style == MapStyle.Chart)
             {
-                if (_chartFogPng == null || _chartFogPngRevision != snapshot.Revision)
+                if (_chartFogPng == null ||
+                    _chartFogPngRevision != snapshot.Revision ||
+                    _chartFogPngSolid != solid)
                 {
-                    _chartFogPng = BuildChartFogPng(snapshot.Mask, _renderer.Seed);
+                    _chartFogPng = BuildChartFogPng(snapshot.Mask, _renderer.Seed, solid);
                     _chartFogPngRevision = snapshot.Revision;
+                    _chartFogPngSolid = solid;
                 }
 
                 png = _chartFogPng;
             }
             else
             {
-                if (_fogPng == null || _fogPngRevision != snapshot.Revision)
+                if (_fogPng == null ||
+                    _fogPngRevision != snapshot.Revision ||
+                    _fogPngSolid != solid)
                 {
-                    _fogPng = BuildFogPng(snapshot.Mask);
+                    _fogPng = BuildFogPng(snapshot.Mask, solid);
                     _fogPngRevision = snapshot.Revision;
+                    _fogPngSolid = solid;
                 }
 
                 png = _fogPng;
@@ -4498,6 +4554,15 @@ internal sealed class LiveMapHttpServer
     private string GetEffectiveFogMode(ViewLevel viewLevel)
     {
         return viewLevel != ViewLevel.Public ? "off" : _getFogMode();
+    }
+
+    // Opaque cover plus hidden unexplored region names and spawn/trader markers. Only the
+    // fogged public view can hide anything; the shared and admin tiers always see it all.
+    private bool GetEffectiveFogHide(ViewLevel viewLevel)
+    {
+        return viewLevel == ViewLevel.Public &&
+               GetEffectiveFogMode(viewLevel) != "off" &&
+               _config.FogHideUnexplored;
     }
 
     private double GetExploredPercentage(FogMaskSnapshot snapshot)
@@ -4541,7 +4606,7 @@ internal sealed class LiveMapHttpServer
         }
     }
 
-    private static byte[] BuildFogPng(byte[] mask)
+    private static byte[] BuildFogPng(byte[] mask, bool solid)
     {
         int expectedLength = FogTracker.Size * FogTracker.Size;
         if (mask.Length != expectedLength)
@@ -4552,10 +4617,12 @@ internal sealed class LiveMapHttpServer
         // Ghosted-fog treatment: unexplored terrain is dimmed and cooled toward a
         // neutral slate (~57% cover) instead of blacked out, so the world's shape,
         // biomes, and coastlines stay readable at every zoom while clearly fogged.
+        // The solid treatment (FogHideUnexplored) covers every unexplored cell fully;
+        // only the explored side of a boundary is feathered, so nothing peeks through.
         const byte fogRed = 0x26;
         const byte fogGreen = 0x2e;
         const byte fogBlue = 0x3a;
-        const int unrevealedAlpha = 145;
+        int unrevealedAlpha = solid ? 255 : 145;
         const int featherRadius = 2;
         var rgba = new byte[expectedLength * 4];
         for (int y = 0; y < FogTracker.Size; y++)
@@ -4586,14 +4653,16 @@ internal sealed class LiveMapHttpServer
                 rgba[offset] = fogRed;
                 rgba[offset + 1] = fogGreen;
                 rgba[offset + 2] = fogBlue;
-                rgba[offset + 3] = (byte)((alphaTotal + (samples / 2)) / samples);
+                rgba[offset + 3] = solid && mask[(y * FogTracker.Size) + x] == 0
+                    ? (byte)255
+                    : (byte)((alphaTotal + (samples / 2)) / samples);
             }
         }
 
         return PngEncoder.EncodeRgba(rgba, FogTracker.Size, FogTracker.Size);
     }
 
-    private static byte[] BuildChartFogPng(byte[] mask, int seed)
+    private static byte[] BuildChartFogPng(byte[] mask, int seed, bool solid)
     {
         int expectedLength = FogTracker.Size * FogTracker.Size;
         if (mask.Length != expectedLength)
@@ -4601,7 +4670,7 @@ internal sealed class LiveMapHttpServer
             throw new InvalidOperationException("Fog mask dimensions do not match its length.");
         }
 
-        const int unrevealedAlpha = 210;
+        int unrevealedAlpha = solid ? 255 : 210;
         const int featherRadius = 2;
         const float halfWorld = FogTracker.WorldSpan / 2f;
         var rgba = new byte[expectedLength * 4];
@@ -4634,7 +4703,9 @@ internal sealed class LiveMapHttpServer
                 int offset = ((y * FogTracker.Size) + x) * 4;
                 MapStyleCompositor.ComposeChartFog(worldX, worldZ, seed)
                     .WriteRgba(rgba, offset);
-                rgba[offset + 3] = (byte)((alphaTotal + (samples / 2)) / samples);
+                rgba[offset + 3] = solid && mask[(y * FogTracker.Size) + x] == 0
+                    ? (byte)255
+                    : (byte)((alphaTotal + (samples / 2)) / samples);
             }
         }
 

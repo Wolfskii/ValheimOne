@@ -27,6 +27,7 @@ internal sealed class LiveMapConfig
     private readonly ConfigEntryBool _entityLayer;
     private readonly ConfigEntryBool _resourceLayers;
     private readonly ConfigEntryString _fogMode;
+    private readonly ConfigEntryBool _fogHideUnexplored;
     private readonly ConfigEntryBool _consoleEnabled;
     private readonly ConfigEntryString _consoleWhitelist;
     private readonly ConfigEntryBool _allowAllCommands;
@@ -55,6 +56,7 @@ internal sealed class LiveMapConfig
         ConfigEntryBool entityLayer,
         ConfigEntryBool resourceLayers,
         ConfigEntryString fogMode,
+        ConfigEntryBool fogHideUnexplored,
         ConfigEntryBool consoleEnabled,
         ConfigEntryString consoleWhitelist,
         ConfigEntryBool allowAllCommands,
@@ -82,6 +84,7 @@ internal sealed class LiveMapConfig
         _entityLayer = entityLayer;
         _resourceLayers = resourceLayers;
         _fogMode = fogMode;
+        _fogHideUnexplored = fogHideUnexplored;
         _consoleEnabled = consoleEnabled;
         _consoleWhitelist = consoleWhitelist;
         _allowAllCommands = allowAllCommands;
@@ -171,4 +174,6 @@ internal sealed class LiveMapConfig
             }
         }
     }
+
+    public bool FogHideUnexplored => _fogHideUnexplored.Value;
 }

@@ -3852,6 +3852,15 @@
     user-select: none;
 }
 
+#valheimone-embed-root .minimap-fog {
+    position: absolute;
+    inset: 0;
+}
+
+#valheimone-embed-root .minimap-fog[hidden] {
+    display: none;
+}
+
 #valheimone-embed-root .minimap-view-rect {
     position: absolute;
     min-width: 2px;

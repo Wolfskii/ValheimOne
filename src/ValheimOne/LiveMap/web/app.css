@@ -3852,6 +3852,15 @@ body.is-dropping-webpin #map .leaflet-overlay-pane path {
     user-select: none;
 }
 
+.minimap-fog {
+    position: absolute;
+    inset: 0;
+}
+
+.minimap-fog[hidden] {
+    display: none;
+}
+
 .minimap-view-rect {
     position: absolute;
     min-width: 2px;

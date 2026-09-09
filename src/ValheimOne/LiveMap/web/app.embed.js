@@ -732,6 +732,7 @@
     var minimapElement = null;
     var minimapImage = null;
     var minimapViewRect = null;
+    var minimapFogImage = null;
     var minimapFrame = 0;
     var minimapSetOpen = null;
     var measureButton = null;
@@ -892,7 +893,8 @@
     var poiRequestSequence = 0;
     var poiLoadPending = false;
     var pinsPollingStarted = false;
-    var fogStatus = { mode: "off", revision: "0", size: 0 };
+    var fogStatus = { mode: "off", revision: "0", size: 0, hide: false };
+    var fogHiddenRevision = null;
     var fogAvailable = false;
     var fogOverlay = null;
     var fogDisplayedRevision = null;
@@ -9684,6 +9686,10 @@
                 var container = L.DomUtil.create("section", "leaflet-control minimap-control");
                 var frame = L.DomUtil.create("div", "minimap-frame", container);
                 minimapImage = L.DomUtil.create("img", "minimap-image", frame);
+                minimapFogImage = L.DomUtil.create("img", "minimap-image minimap-fog", frame);
+                minimapFogImage.alt = "";
+                minimapFogImage.draggable = false;
+                minimapFogImage.hidden = true;
                 minimapViewRect = L.DomUtil.create("div", "minimap-view-rect", frame);
                 var toggle = L.DomUtil.create("button", "minimap-toggle", container);
                 var isOpen = loadMinimapPreference();
@@ -16821,7 +16827,8 @@
         fogStatus = {
             mode: mode,
             revision: Number.isFinite(revisionNumber) ? String(Math.max(0, Math.floor(revisionNumber))) : "0",
-            size: Number.isFinite(sizeNumber) ? Math.max(0, Math.floor(sizeNumber)) : 0
+            size: Number.isFinite(sizeNumber) ? Math.max(0, Math.floor(sizeNumber)) : 0,
+            hide: Boolean(status && status.hide === true && mode !== "off")
         };
 
         var wasAvailable = fogAvailable;
@@ -16837,14 +16844,55 @@
     }
 
     function fogCacheKey(revision) {
-        return fogMapStyle() + "|" + revision;
+        return fogMapStyle() + "|" + (fogStatus.hide ? "solid" : "ghost") + "|" + revision;
     }
 
     function fogUrl(revision) {
+        var cover = fogStatus.hide ? "&cover=solid" : "";
         if (fogMapStyle() === "chart") {
-            return authorizedUrl("fog.png?style=chart&rev=" + encodeURIComponent(revision));
+            return authorizedUrl("fog.png?style=chart&rev=" + encodeURIComponent(revision) + cover);
         }
-        return authorizedUrl("fog.png?rev=" + encodeURIComponent(revision));
+        return authorizedUrl("fog.png?rev=" + encodeURIComponent(revision) + cover);
+    }
+
+    // The minimap draws the unfogged world overview, so it mirrors the fog overlay
+    // whenever the main map is fogged; hidden entirely when fog is off or unavailable.
+    function syncMinimapFog(url) {
+        if (!minimapFogImage) {
+            return;
+        }
+        if (!fogAvailable || !url) {
+            minimapFogImage.hidden = true;
+            minimapFogImage.removeAttribute("src");
+            return;
+        }
+        if (minimapFogImage.getAttribute("src") !== url) {
+            minimapFogImage.src = url;
+        }
+        minimapFogImage.hidden = false;
+    }
+
+    // Under the solid cover the server drops unexplored region names and spawn/trader
+    // markers from the public feeds, so a newer fog revision means newly revealed
+    // ground: refetch both so they appear without a page reload.
+    function refreshHiddenFogFeeds() {
+        if (!fogStatus.hide) {
+            fogHiddenRevision = null;
+            return;
+        }
+        var revisionKey = fogStatus.revision;
+        if (fogHiddenRevision === revisionKey) {
+            return;
+        }
+        var first = fogHiddenRevision === null;
+        fogHiddenRevision = revisionKey;
+        if (first || !map) {
+            return;
+        }
+        regionsRequested = false;
+        loadRegions();
+        lastPoiRequestedView = null;
+        loadPoisForCurrentView();
     }
 
     function showFogCover() {
@@ -16886,15 +16934,18 @@
             fogLoadSequence++;
             fogRequestedRevision = null;
             fogDisplayedRevision = null;
+            fogHiddenRevision = null;
             if (fogOverlay) {
                 setLayerVisible(fogOverlay, false);
                 fogOverlay = null;
             }
             hideFogCover();
+            syncMinimapFog(null);
             syncLayerVisibility();
             return;
         }
 
+        refreshHiddenFogFeeds();
         var revision = fogStatus.revision;
         var cacheKey = fogCacheKey(revision);
         var url = fogUrl(revision);
@@ -16924,6 +16975,7 @@
                 fogDisplayedRevision = cacheKey;
                 fogRequestedRevision = cacheKey;
                 feedLastUpdated.fog = Date.now();
+                syncMinimapFog(url);
                 syncLayerVisibility();
                 hideFogCover();
             };
@@ -16954,6 +17006,7 @@
             fogDisplayedRevision = cacheKey;
             fogRequestedRevision = cacheKey;
             feedLastUpdated.fog = Date.now();
+            syncMinimapFog(url);
             syncLayerVisibility();
         };
         image.onerror = function () {

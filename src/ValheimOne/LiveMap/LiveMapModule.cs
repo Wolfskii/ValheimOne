@@ -135,6 +135,12 @@ public sealed class LiveMapModule : IFeatureModule
             "off",
             "Fog of war for the map view: off (full map), trails (areas players have traveled), " +
             "explored (player trails plus cartography-table exploration data).");
+        ConfigEntryBool fogHideUnexplored = _feature.Bool(
+            "FogHideUnexplored",
+            false,
+            "Hide unexplored areas completely on the fogged public view: an opaque cover instead " +
+            "of the ghosted tint, and region names, spawn and trader markers stay hidden until " +
+            "someone explores them. No effect when FogMode is off.");
         ConfigEntryBool consoleEnabled = _feature.Bool(
             "ConsoleEnabled",
             false,
@@ -179,6 +185,7 @@ public sealed class LiveMapModule : IFeatureModule
             entityLayer,
             resourceLayers,
             fogMode,
+            fogHideUnexplored,
             consoleEnabled,
             consoleWhitelist,
             allowAllCommands,
