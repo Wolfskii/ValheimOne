@@ -89,8 +89,9 @@ fi
 cleanup
 trap - EXIT
 cp "$server/BepInEx/LogOutput.log" "$output/BepInEx.log"
-if grep -qE 'Failed to patch|Feature patch application failed|RUNTIME REGRESSION FAIL|FieldAccessException|MissingFieldException|NullReferenceException' "$output/BepInEx.log"; then
+if grep -qE 'Failed to patch|Feature patch application failed|RUNTIME REGRESSION FAIL|FieldAccessException|MissingFieldException|NullReferenceException' "$output/BepInEx.log" "$output/server.log"; then
     echo 'Runtime log contains an unhandled failure.' >&2
+    grep -nE -A8 'Failed to patch|Feature patch application failed|RUNTIME REGRESSION FAIL|FieldAccessException|MissingFieldException|NullReferenceException' "$output/BepInEx.log" "$output/server.log" | head -n 100 >&2 || true
     status=1
 fi
 exit "$status"

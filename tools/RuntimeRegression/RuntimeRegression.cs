@@ -73,7 +73,22 @@ public sealed class RuntimeRegression : BaseUnityPlugin
         {
             Set(typeof(Player), "m_localPlayer", previous);
             _harmony?.UnpatchSelf();
-            foreach (GameObject obj in _objects) if (obj != null) Destroy(obj);
+            foreach (GameObject obj in _objects)
+            {
+                if (obj == null) continue;
+                ZNetView? view = obj.GetComponent<ZNetView>();
+                if (view != null && view.IsValid() && ZNetScene.instance != null)
+                {
+                    // A plain Unity Destroy leaves registered chest views in ZNetScene,
+                    // which then dereferences a dead component during its next update.
+                    ZNetScene.instance.Destroy(obj);
+                }
+                else
+                {
+                    Destroy(obj);
+                }
+            }
+            CapturedViews.Clear();
         }
     }
 
