@@ -4,6 +4,18 @@ All notable changes to ValheimOne will be documented in this file. This project 
 
 ## [Unreleased]
 
+## [0.13.6] - 2026-09-10
+
+### Fixed
+
+- Shared Exploration works with Valheim 1.0's `BitArray` minimap storage, while retaining support for older `bool[]` storage. Received exploration updates the actual minimap and fog; incremental exchange and the persisted server union retain their existing format.
+- Craft From Chest includes accessible chests owned by another nearby player. Before crafting or building, the current owner must grant a handoff and the matching inventory revision must arrive. Busy chests, privacy and wards remain protected; unavailable transfers do not create items or buildings. Automated station scans retain their existing ownership behavior.
+- Chest crafting follows Valheim 1.0's distinction between normal recipe ingredients and upgrade-station ingredients.
+
+### Upgrade
+
+- Update the server and every participating player's ValheimOne DLL to 0.13.6. These fixes run on clients too; updating only the dedicated server is insufficient. Keep your existing configuration.
+
 ## [0.13.5] - 2026-09-09
 
 ### Fixed

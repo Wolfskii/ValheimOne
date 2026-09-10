@@ -1,0 +1,393 @@
+using System;
+using System.Collections;
+using System.Collections.Generic;
+using System.IO;
+using System.Reflection;
+using BepInEx;
+using HarmonyLib;
+using UnityEngine;
+using ValheimOne.Configuration;
+using ValheimOne.Infrastructure;
+using ValheimOne.Modules;
+using ValheimOne.Networking;
+
+namespace ValheimOne.RuntimeRegression;
+
+// Test-only plugin. Never packaged with ValheimOne. Uses real game components and
+// inventory serialization; the deterministic two-replica transport lets us deliver
+// replies before data, duplicate replies, and ownership changes in controlled order.
+[BepInPlugin("com.humangenome.valheimone.regression", "ValheimOne runtime regression", "1.0.0")]
+[BepInDependency(ValheimOnePlugin.PluginGuid)]
+public sealed class RuntimeRegression : BaseUnityPlugin
+{
+    private const long RemotePeer = 8877665511L;
+    private static readonly HashSet<ZNetView> CapturedViews = new();
+    private static readonly Queue<(long Target, string Name, byte[] Data)> Packets = new();
+    private static bool _denyWard;
+    private readonly List<GameObject> _objects = new();
+    private Harmony? _harmony;
+    private int _assertions;
+    private bool _ran;
+    private string _root = "";
+
+    private void Awake()
+    {
+        if (Environment.GetEnvironmentVariable("VALHEIMONE_RUNTIME_REGRESSION") != "1")
+        {
+            enabled = false;
+            return;
+        }
+        _root = Path.Combine(Paths.ConfigPath, "runtime-regression");
+        Directory.CreateDirectory(_root);
+        _harmony = new Harmony("com.humangenome.valheimone.regression");
+        _harmony.Patch(AccessTools.Method(typeof(ZNetView), "InvokeRPC",
+            new[] { typeof(long), typeof(string), typeof(object[]) }),
+            prefix: new HarmonyMethod(typeof(RuntimeRegression), nameof(CaptureRpc)));
+        _harmony.Patch(AccessTools.Method(typeof(PrivateArea), "CheckAccess",
+            new[] { typeof(Vector3), typeof(float), typeof(bool), typeof(bool) }),
+            prefix: new HarmonyMethod(typeof(RuntimeRegression), nameof(CheckWard)));
+    }
+
+    private void Update()
+    {
+        if (_ran || ZNet.instance == null || !ZNet.instance.IsServer() ||
+            ZNetScene.instance == null || ObjectDB.instance == null ||
+            ObjectDB.instance.GetItemPrefab("Wood") == null || WorldGenerator.instance == null) return;
+        _ran = true;
+        Player? previous = Player.m_localPlayer;
+        try
+        {
+            TestBitmapStorage();
+            TestMapExchange();
+            TestChestTransfer();
+            string result = $"RUNTIME REGRESSION PASS assertions={_assertions} game={(global::Version.GetVersionString())}";
+            Logger.LogInfo(result);
+            File.WriteAllText(Path.Combine(_root, "result.txt"), result + "\n");
+        }
+        catch (Exception exception)
+        {
+            Logger.LogError("RUNTIME REGRESSION FAIL " + exception);
+            File.WriteAllText(Path.Combine(_root, "result.txt"), "FAIL " + exception + "\n");
+        }
+        finally
+        {
+            Set(typeof(Player), "m_localPlayer", previous);
+            _harmony?.UnpatchSelf();
+            foreach (GameObject obj in _objects) if (obj != null) Destroy(obj);
+        }
+    }
+
+    private static bool CaptureRpc(ZNetView __instance, long __0, string __1, object[] __2)
+    {
+        if (!CapturedViews.Contains(__instance) || !__1.StartsWith("VO_CraftChest", StringComparison.Ordinal))
+            return true;
+        Packets.Enqueue((__0, __1, ((ZPackage)__2[0]).GetArray()));
+        return false;
+    }
+
+    private static bool CheckWard(ref bool __result)
+    {
+        if (!_denyWard) return true;
+        __result = false;
+        return false;
+    }
+
+    private void Check(bool condition, string name)
+    {
+        if (!condition) throw new InvalidOperationException(name);
+        _assertions++;
+        Logger.LogInfo("REGRESSION " + name);
+    }
+
+    private void TestBitmapStorage()
+    {
+        foreach (object storage in new object[] { new bool[64], new BitArray(64) })
+        {
+            Check(ExplorationBitmap.TryWrap(storage, out ExplorationBitmap map), "accept " + storage.GetType().Name);
+            map[0] = true; map[7] = true; map[63] = true;
+            var copy = new bool[64];
+            map.CopyTo(copy);
+            Check(copy[0] && copy[7] && copy[63] && !copy[8], "bitmap endpoints and copy");
+            Check(storage is bool[] array ? array[63] : ((BitArray)storage)[63], "write through to native storage");
+            var sent = new bool[64];
+            var encoded = (List<ExploredMapRange[]>)Call(typeof(MapSharingModule), "EncodeRanges", map, sent, 8)!;
+            Check(encoded.Count == 1 && encoded[0].Length == 3 && sent[63], "encode row boundaries and sent bits");
+            Check(((List<ExploredMapRange[]>)Call(typeof(MapSharingModule), "EncodeRanges", map, sent, 8)!).Count == 0,
+                "incremental exchange does not echo sent pixels");
+        }
+        Check(!ExplorationBitmap.TryWrap(null, out _) && !ExplorationBitmap.TryWrap(new byte[64], out _),
+            "unsupported storage fails closed");
+    }
+
+    private MapSharingModule MapModule(string name, string store)
+    {
+        string config = Path.Combine(_root, name + ".cfg");
+        File.WriteAllText(config, "[MapSharing]\nEnabled = true\nSharedExploration = true\nExplorationSyncSeconds = 10\n");
+        var settings = new ValheimOneConfig(config);
+        var module = new MapSharingModule(settings.Features, new ModLogger(Logger));
+        Set(module, "_storageDirectory", store);
+        return module;
+    }
+
+    private Minimap Minimap(int first, int second)
+    {
+        var obj = new GameObject("regression-minimap");
+        obj.SetActive(false);
+        _objects.Add(obj);
+        Minimap map = obj.AddComponent<Minimap>();
+        map.m_textureSize = 8;
+        FieldInfo field = AccessTools.Field(typeof(Minimap), "m_explored");
+        object explored = field.FieldType == typeof(BitArray) ? new BitArray(64) : new bool[64];
+        field.SetValue(map, explored);
+        ExplorationBitmap.TryWrap(explored, out ExplorationBitmap bitmap);
+        bitmap[first] = bitmap[second] = true;
+        var fog = new Texture2D(8, 8, TextureFormat.RGBA32, false);
+        var colors = new Color32[64];
+        for (int i = 0; i < colors.Length; i++) colors[i] = new Color32(255, 77, 99, 255);
+        fog.SetPixels32(colors); fog.Apply();
+        Set(map, "m_fogTexture", fog);
+        return map;
+    }
+
+    private static ZPackage MapPacket(int transfer, params int[] pixels)
+    {
+        var package = new ZPackage();
+        package.Write(transfer); package.Write(1); package.Write(0); package.Write(8); package.Write(pixels.Length);
+        foreach (int pixel in pixels) { package.Write(pixel % 8); package.Write(pixel % 8); package.Write(pixel / 8); }
+        return new ZPackage(package.GetArray());
+    }
+
+    private void TestMapExchange()
+    {
+        string store = Path.Combine(_root, "map-union-" + Guid.NewGuid().ToString("N"));
+        MapSharingModule server = MapModule("server", store);
+        MapSharingModule a = MapModule("client-a", Path.Combine(_root, "map-a"));
+        MapSharingModule b = MapModule("client-b", Path.Combine(_root, "map-b"));
+        Minimap ma = Minimap(0, 9), mb = Minimap(37, 63);
+        Call(a, "BeginClientMap", ma); Call(b, "BeginClientMap", mb);
+        Check(Get(a, "_clientSent") is bool[] && Get(b, "_clientSent") is bool[], "enabled native minimap initializes both peers");
+        Call(server, "HandleMap", RemotePeer, MapPacket(1, 0, 9));
+        Check(Get(server, "_serverUnion") == null, "unhandshaken map sender rejected");
+        ((IVersionHandshakeExtension)server).OnPeerCompatible(RemotePeer);
+        ((IVersionHandshakeExtension)server).OnPeerCompatible(RemotePeer + 1);
+        Call(server, "HandleMap", RemotePeer, MapPacket(1, 0, 9));
+        Call(server, "HandleMap", RemotePeer + 1, MapPacket(2, 37, 63));
+        bool[] union = (bool[])Get(server, "_serverUnion")!;
+        Check(union[0] && union[9] && union[37] && union[63] && !union[10], "server merges two explored regions only");
+        Call(a, "HandleIncomingChunk", RemotePeer, MapPacket(3, 0, 9, 37, 63), false);
+        Call(b, "HandleIncomingChunk", RemotePeer, MapPacket(4, 0, 9, 37, 63), false);
+        foreach (Minimap map in new[] { ma, mb })
+        {
+            Check(GameCompat.TryGetExploredMap(map, out ExplorationBitmap bitmap) && bitmap[0] && bitmap[9] && bitmap[37] && bitmap[63],
+                "received exploration reaches actual minimap storage");
+            Color32[] colors = ((Texture2D)Get(map, "m_fogTexture")!).GetPixels32();
+            Check(colors[37].r == 0 && colors[37].g == 77 && colors[10].r == 255,
+                "fog clears explored pixels and preserves unknown fog and other channel");
+        }
+        Set(server, "_nextPersistenceAt", 0f);
+        Call(server, "PumpServer", ZNet.instance, ZRoutedRpc.instance, new[] { RemotePeer, RemotePeer + 1 });
+        Check(Directory.GetFiles(store, "*_mapSync.bin").Length == 1, "shared exploration persisted to disk");
+        MapSharingModule reload = MapModule("server-reload", store);
+        Call(reload, "EnsureServerWorld", ZNet.instance, 8);
+        bool[] restored = (bool[])Get(reload, "_serverUnion")!;
+        Check(restored[0] && restored[9] && restored[37] && restored[63] && !restored[10], "server restart restores exploration union");
+        Call(server, "HandleMap", RemotePeer, MapPacket(5, 10));
+        Check(((bool[])Get(server, "_serverUnion")!)[10], "later exploration delta is merged");
+        Set(ma, "m_explored", AccessTools.Field(typeof(Minimap), "m_explored").FieldType == typeof(BitArray)
+            ? (object)new BitArray(1) : new bool[1]);
+        Check(!(bool)Call(a, "ApplyClientRanges", 8, new[] { new ExploredMapRange(0, 7, 7) })!,
+            "changed minimap dimensions reject writes");
+    }
+
+    private Player NewPlayer(Vector3 position)
+    {
+        var obj = new GameObject("regression-player");
+        obj.SetActive(false);
+        obj.transform.position = position;
+        _objects.Add(obj);
+        ZNetView view = obj.AddComponent<ZNetView>();
+        ZDO zdo = ZDOMan.instance.CreateNewZDO(position, 0);
+        Set(view, "m_zdo", zdo);
+        Player player = obj.AddComponent<Player>();
+        Set(player, "m_nview", view);
+        Set(player, "m_inventory", new Inventory("regression-player", null, 8, 4));
+        zdo.Set(ZDOVars.s_playerID, 123456L);
+        Set(typeof(Player), "m_localPlayer", player);
+        return player;
+    }
+
+    private Container NewChest(Vector3 position, int wood)
+    {
+        GameObject obj = Instantiate(ZNetScene.instance.GetPrefab("piece_chest_wood"), position, Quaternion.identity);
+        _objects.Add(obj);
+        Container container = obj.GetComponent<Container>();
+        container.m_checkGuardStone = false;
+        container.GetInventory().RemoveAll();
+        container.GetInventory().AddItem(ObjectDB.instance.GetItemPrefab("Wood"), wood);
+        CapturedViews.Add(ChestScanner.GetNetworkView(container)!);
+        return container;
+    }
+
+    private void TestChestTransfer()
+    {
+        Vector3 position = new Vector3(0, 600, 0);
+        Player player = NewPlayer(position);
+        Container authority = NewChest(position + Vector3.right, 10);
+        Container replica = NewChest(position + Vector3.left, 3);
+        Container local = NewChest(position + Vector3.forward, 2);
+        ZNetView authorityView = ChestScanner.GetNetworkView(authority)!;
+        ZNetView replicaView = ChestScanner.GetNetworkView(replica)!;
+        ZDO ownerZdo = authorityView.GetZDO(), clientZdo = replicaView.GetZDO();
+        long owner = ZDOMan.GetSessionID();
+        clientZdo.SetOwner(owner);
+        SetProperty(clientZdo, "Owner", false); // This object represents the other process's replica.
+        var preview = new ChestScanner(includeRemote: true);
+        var automation = new ChestScanner();
+        Check(Contains(preview.GetInventories(player, 20, false, 1), replica.GetInventory()), "remote-owned chest appears in preview");
+        Check(!Contains(automation.GetInventories(player, 20, false, 1), replica.GetInventory()), "automation retains owned-only inventory access");
+        Set(replica, "m_inUse", true);
+        Check(!Contains(preview.GetInventories(player, 20, false, 1), replica.GetInventory()), "open chest excluded");
+        Set(replica, "m_inUse", false);
+        clientZdo.Set(ZDOVars.s_inUse, 1);
+        Check(!Contains(preview.GetInventories(player, 20, false, 1), replica.GetInventory()), "remote in-use flag excluded");
+        clientZdo.Set(ZDOVars.s_inUse, 0);
+        replica.m_privacy = Container.PrivacySetting.Group;
+        Check(!Contains(preview.GetInventories(player, 20, true, 1), replica.GetInventory()), "privacy applies even with ward bypass");
+        replica.m_privacy = Container.PrivacySetting.Public;
+        replica.m_checkGuardStone = true;
+        _denyWard = true;
+        Check(!Contains(preview.GetInventories(player, 20, false, 1), replica.GetInventory()), "ward denial excludes chest");
+        Check(Contains(preview.GetInventories(player, 20, true, 1), replica.GetInventory()), "explicit ward bypass permits otherwise public chest");
+        _denyWard = false;
+        replica.m_checkGuardStone = false;
+
+        // Make the authority revision newer than the replica, with unchanged inventory.
+        for (int i = 0; i < 20; i++) ownerZdo.Set("regression_revision", i);
+        Check(ChestOwnership.Prepare(replica, player) == ChestOwnership.Result.Pending, "foreign ownership does not authorize immediate consumption");
+        var request = Packets.Dequeue();
+        Check(request.Target == owner && request.Name == "VO_CraftChestRequest", "request sent to current owner");
+        Call(typeof(ChestOwnership), "HandleRequest", authority, RemotePeer, new ZPackage(request.Data));
+        var reply = Packets.Dequeue();
+        Check(reply.Target == RemotePeer && !authorityView.IsOwner(), "only owner grants handoff and relinquishes ownership");
+        Call(typeof(ChestOwnership), "HandleReply", replica, owner + 1, new ZPackage(reply.Data));
+        Check(ChestOwnership.Prepare(replica, player) == ChestOwnership.Result.Pending, "spoofed grant ignored");
+        Call(typeof(ChestOwnership), "HandleReply", replica, owner, new ZPackage(reply.Data));
+        Check(ChestOwnership.Prepare(replica, player) == ChestOwnership.Result.Pending, "grant before ownership update stays pending");
+        SetProperty(clientZdo, "Owner", true);
+        clientZdo.OwnerRevision = ownerZdo.OwnerRevision;
+        Check(ChestOwnership.Prepare(replica, player) == ChestOwnership.Result.Pending, "ownership before inventory update stays pending");
+        CopyItems(ownerZdo, clientZdo);
+        clientZdo.DataRevision = ownerZdo.DataRevision;
+        Check(ChestOwnership.Prepare(replica, player) == ChestOwnership.Result.Ready, "grant plus exact ownership and current data authorize use");
+        Check(replica.GetInventory().CountItems("$item_wood") == 10, "handoff loads authoritative inventory rather than stale preview");
+
+        // Exclude the authority replica from the player's physical scan now that transfer completed.
+        authority.transform.position = position + Vector3.right * 100;
+        player.GetInventory().AddItem(ObjectDB.instance.GetItemPrefab("Wood"), 2);
+        CraftFromChestModule module = (CraftFromChestModule)Get(typeof(CraftFromChestModule), "_active")!;
+        var requirement = new Piece.Requirement { m_resItem = ObjectDB.instance.GetItemPrefab("Wood").GetComponent<ItemDrop>(), m_amount = 5 };
+        var requirements = new[] { requirement };
+        Check((ChestOwnership.Result)Call(module, "PrepareResources", player, requirements, 0, 1)! == ChestOwnership.Result.Ready,
+            "craft preflight succeeds after remote chest handoff");
+        int before = player.GetInventory().CountItems("$item_wood") + replica.GetInventory().CountItems("$item_wood") + local.GetInventory().CountItems("$item_wood");
+        player.ConsumeResources(requirements, 0);
+        int after = player.GetInventory().CountItems("$item_wood") + replica.GetInventory().CountItems("$item_wood") + local.GetInventory().CountItems("$item_wood");
+        Check(before - after == 5 && player.GetInventory().CountItems("$item_wood") == 0,
+            "native consumption removes exact cost and uses backpack first");
+        CopyItems(clientZdo, ownerZdo);
+        ownerZdo.DataRevision++;
+        ChestScanner.RefreshInventory(authority);
+        Check(authority.GetInventory().CountItems("$item_wood") == replica.GetInventory().CountItems("$item_wood"),
+            "saved consumption replicates back to previous owner");
+
+        FieldInfo? upgraderField = AccessTools.Field(typeof(Piece.Requirement), "m_upgraderResource");
+        if (upgraderField != null)
+        {
+            var upgradeOnly = new Piece.Requirement { m_resItem = requirement.m_resItem, m_amount = 100 };
+            upgraderField.SetValue(upgradeOnly, true);
+            var normal = new Piece.Requirement { m_resItem = requirement.m_resItem, m_amount = 3 };
+            Check((ChestOwnership.Result)Call(module, "PrepareResources", player, new[] { normal, upgradeOnly }, 1, 1)! == ChestOwnership.Result.Ready,
+                "normal crafting excludes upgrader-only ingredients");
+            int total = replica.GetInventory().CountItems("$item_wood") + local.GetInventory().CountItems("$item_wood");
+            player.ConsumeResources(new[] { normal, upgradeOnly }, 1);
+            Check(total - replica.GetInventory().CountItems("$item_wood") - local.GetInventory().CountItems("$item_wood") == 3,
+                "normal recipe removes only its actual cost on 1.0");
+        }
+        SetProperty(clientZdo, "Owner", false);
+        clientZdo.SetOwner(RemotePeer + 5);
+        Check(ChestOwnership.Prepare(replica, player) == ChestOwnership.Result.Pending, "ownership loss requires a new grant");
+        int count = replica.GetInventory().CountItems("$item_wood");
+        Call(typeof(ChestOwnership), "HandleReply", replica, owner, new ZPackage(reply.Data));
+        Check(ChestOwnership.Prepare(replica, player) == ChestOwnership.Result.Pending && replica.GetInventory().CountItems("$item_wood") == count,
+            "old grant cannot authorize new transfer or remove items");
+        local.GetInventory().RemoveAll();
+        requirement.m_amount = 1;
+        var recipe = ScriptableObject.CreateInstance<Recipe>();
+        recipe.m_resources = requirements;
+        recipe.m_item = ObjectDB.instance.GetItemPrefab("Hammer").GetComponent<ItemDrop>();
+        var guiObject = new GameObject("regression-crafting-gui");
+        guiObject.SetActive(false);
+        _objects.Add(guiObject);
+        InventoryGui gui = guiObject.AddComponent<InventoryGui>();
+        Set(gui, "m_craftRecipe", recipe);
+        Call(gui, "DoCrafting", player);
+        Check(player.GetInventory().CountItems(recipe.m_item.m_itemData.m_shared.m_name) == 0,
+            "pending transfer cannot create crafted output");
+        object[] uiArgs = { player, 0.25f, recipe, null!, false, 1, 0.5f };
+        bool updateUi = (bool)Call(typeof(CraftFromChestModule), "UpdateRecipePrefix", uiArgs)!;
+        Check(updateUi && (float)uiArgs[1] == 0f && (float)uiArgs[6] == 0.5f,
+            "pending transfer freezes craft clock while preserving normal progress and cancel controls");
+        uiArgs[1] = 0.25f; uiArgs[6] = -1f;
+        Call(typeof(CraftFromChestModule), "UpdateRecipePrefix", uiArgs);
+        Check((float)uiArgs[6] == -1f && (float)Get(module, "_craftWaitStarted")! < 0f,
+            "cancelled craft remains cancelled");
+
+        var ghostObject = new GameObject("regression-build-preview");
+        ghostObject.SetActive(false);
+        ghostObject.transform.position = position;
+        _objects.Add(ghostObject);
+        Piece piece = ghostObject.AddComponent<Piece>();
+        piece.m_resources = requirements;
+        Set(player, "m_placementGhost", ghostObject);
+        Set(player, "m_placePressedTime", -9999f);
+        Check(!player.TryPlacePiece(piece), "pending transfer prevents native building placement");
+        Check((float)Get(player, "m_placePressedTime")! == -9999f, "pending placement never schedules a delayed build input");
+        ghostObject.transform.position += Vector3.right;
+        Check(!player.TryPlacePiece(piece) && (float)Get(player, "m_placePressedTime")! == -9999f,
+            "moving the build preview cannot trigger delayed placement");
+
+        ownerZdo.SetOwner(owner);
+        Set(authority, "m_inUse", true);
+        Packets.Clear();
+        var busyRequest = new ZPackage(); busyRequest.Write(778); busyRequest.Write(player.GetPlayerID());
+        Call(typeof(ChestOwnership), "HandleRequest", authority, RemotePeer, new ZPackage(busyRequest.GetArray()));
+        var busyReply = new ZPackage(Packets.Dequeue().Data);
+        Check(busyReply.ReadInt() == 778 && !busyReply.ReadBool() && authorityView.IsOwner(),
+            "owner refuses open chest without handing it away");
+        Set(authority, "m_inUse", false);
+        Packets.Clear();
+    }
+
+    private static void CopyItems(ZDO source, ZDO destination)
+    {
+        // Container storage also changed in 1.0. Exercise the installed game's exact format.
+        byte[]? bytes = source.GetByteArray(ZDOVars.s_items);
+        if (bytes != null) destination.Set(ZDOVars.s_items, (byte[])bytes.Clone());
+        else destination.Set(ZDOVars.s_items, source.GetString(ZDOVars.s_items));
+    }
+
+    private static bool Contains(IReadOnlyList<Inventory> list, Inventory inventory)
+    {
+        foreach (Inventory candidate in list) if (ReferenceEquals(candidate, inventory)) return true;
+        return false;
+    }
+
+    private static object? Get(object target, string name) =>
+        AccessTools.Field(target as Type ?? target.GetType(), name).GetValue(target is Type ? null : target);
+    private static void Set(object target, string name, object? value) =>
+        AccessTools.Field(target as Type ?? target.GetType(), name).SetValue(target is Type ? null : target, value);
+    private static void SetProperty(object target, string name, object value) =>
+        AccessTools.Property(target.GetType(), name).SetValue(target, value, null);
+    private static object? Call(object target, string name, params object[] args) =>
+        AccessTools.Method(target as Type ?? target.GetType(), name).Invoke(target is Type ? null : target, args);
+}

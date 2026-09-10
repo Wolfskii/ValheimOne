@@ -15,6 +15,25 @@ internal sealed class ChestScanner
     private readonly List<Container> _cachedContainers = new List<Container>();
     private readonly List<Inventory> _accessibleInventories = new List<Inventory>();
     private readonly HashSet<Inventory> _seenInventories = new HashSet<Inventory>();
+    private readonly bool _includeRemote;
+
+    public ChestScanner(bool includeRemote = false)
+    {
+        _includeRemote = includeRemote;
+    }
+
+    public Container? FindContainer(Inventory inventory)
+    {
+        foreach (Container container in _cachedContainers)
+        {
+            if (container != null && ReferenceEquals(container.GetInventory(), inventory))
+            {
+                return container;
+            }
+        }
+
+        return null;
+    }
 
     private Player? _cachedPlayer;
     private Vector3 _cachedCenter;
@@ -111,14 +130,14 @@ internal sealed class ChestScanner
             if (container == null ||
                 networkView == null ||
                 !networkView.IsValid() ||
-                !container.IsOwner())
+                (!_includeRemote && !container.IsOwner()) ||
+                (_includeRemote && IsBusy(container, networkView)))
             {
                 continue;
             }
 
-            // Container ownership is required so its normal inventory-changed callback saves
-            // removals. IgnoreWardedChests only bypasses ward protection; container privacy is
-            // still enforced independently.
+            // Remote copies are for crafting previews only. Mutation requires an acknowledged
+            // ownership handoff and a freshly loaded inventory. Automation keeps owned-only scans.
             if (container.m_checkGuardStone &&
                 !ignoreWardedChests &&
                 !PrivateArea.CheckAccess(
@@ -132,11 +151,12 @@ internal sealed class ChestScanner
             // Container.CheckAccess is private in the runtime assembly. Resolve its open-instance
             // delegate once so access checks retain vanilla privacy semantics without emitting a
             // direct private-member call that Unity 6 Mono would reject.
-            if (!CheckContainerAccess(container, playerId))
+            if (!HasContainerAccess(container, playerId))
             {
                 continue;
             }
 
+            if (_includeRemote) RefreshInventory(container);
             Inventory inventory = container.GetInventory();
             if (inventory != null && _seenInventories.Add(inventory))
             {
@@ -145,7 +165,20 @@ internal sealed class ChestScanner
         }
     }
 
-    private static ZNetView? GetNetworkView(Container container)
+    private static readonly Func<Container, bool> LoadInventory =
+        AccessTools.MethodDelegate<Func<Container, bool>>(
+            AccessTools.Method(typeof(Container), "Load", Type.EmptyTypes));
+
+    internal static void RefreshInventory(Container container) => LoadInventory(container);
+
+    internal static bool HasContainerAccess(Container container, long playerId) =>
+        CheckContainerAccess(container, playerId);
+
+    internal static bool IsBusy(Container container, ZNetView networkView) =>
+        container.IsInUse() || networkView.GetZDO().GetInt(ZDOVars.s_inUse) != 0 ||
+        (container.m_wagon != null && container.m_wagon.InUse());
+
+    internal static ZNetView? GetNetworkView(Container container)
     {
         return container.m_rootObjectOverride != null
             ? container.m_rootObjectOverride

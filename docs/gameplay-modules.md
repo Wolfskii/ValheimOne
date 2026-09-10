@@ -34,6 +34,12 @@ Features use four modes: **server-authoritative** logic runs under server owners
 
 **Client-only:** n/a; no current gameplay module uses this mode.
 
+For **Shared Exploration on Valheim 1.0**, update the server and all participating PCs to **0.13.6 or newer**. Enable both `MapSharing.Enabled` and `MapSharing.SharedExploration`; the server combines and saves the players' explored minimap areas.
+
+For **Craft From Chest on 0.13.6+**, nearby chests can be used even when another player last opened them. Crafting may briefly wait for the chest's current owner to hand over its inventory; hammer placement may ask you to click again once the chest is ready.
+
+Open or otherwise busy chests are excluded, and private-chest and ward restrictions still apply. Update the server and all participating PCs; station automation retains its separate existing ownership rules.
+
 ## Modes explained
 
 - **server-authoritative** - runs under server ownership and works with vanilla clients.

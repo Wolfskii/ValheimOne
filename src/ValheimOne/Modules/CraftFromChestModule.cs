@@ -4,6 +4,7 @@ using HarmonyLib;
 using TMPro;
 using UnityEngine;
 using ValheimOne.Configuration;
+using ValheimOne.Infrastructure;
 
 namespace ValheimOne.Modules;
 
@@ -24,7 +25,10 @@ public sealed class CraftFromChestModule : IFeatureModule
     private readonly ConfigEntryBool _ignoreWardedChests;
     private readonly ConfigEntryFloat _cacheSeconds;
     private readonly ConfigEntryBool _includeBuildPlacement;
-    private readonly ChestScanner _scanner = new ChestScanner();
+    private readonly ChestScanner _scanner = new ChestScanner(includeRemote: true);
+    private readonly List<Inventory> _ownedInventories = new();
+    [ThreadStatic] private static bool s_ownedOnly;
+    private float _craftWaitStarted = -1f;
 
     public CraftFromChestModule(FeatureRegistry registry)
     {
@@ -60,6 +64,17 @@ public sealed class CraftFromChestModule : IFeatureModule
         // Crafting and build placement are client-owned game logic. Patches stay installed and
         // consult effective values on every call so a server overlay can hot-enable the feature.
         _active = this;
+        ChestOwnership.Install(harmony, () => IsEnabled);
+        harmony.Patch(
+            AccessTools.Method(typeof(InventoryGui), "UpdateRecipe", new[] { typeof(Player), typeof(float) }),
+            prefix: new HarmonyMethod(typeof(CraftFromChestModule), nameof(UpdateRecipePrefix)));
+        harmony.Patch(
+            AccessTools.Method(typeof(InventoryGui), "DoCrafting", new[] { typeof(Player) }),
+            prefix: new HarmonyMethod(typeof(CraftFromChestModule), nameof(DoCraftingPrefix)),
+            finalizer: new HarmonyMethod(typeof(CraftFromChestModule), nameof(DoCraftingFinalizer)));
+        harmony.Patch(
+            AccessTools.Method(typeof(Player), nameof(Player.TryPlacePiece), new[] { typeof(Piece) }),
+            prefix: new HarmonyMethod(typeof(CraftFromChestModule), nameof(TryPlacePiecePrefix)));
 
         PatchPostfix(
             harmony,
@@ -107,6 +122,128 @@ public sealed class CraftFromChestModule : IFeatureModule
             nameof(SetupRequirementPostfix));
     }
 
+    private static bool UpdateRecipePrefix(
+        Player player, ref float dt, Recipe ___m_craftRecipe, ItemDrop.ItemData ___m_craftUpgradeItem,
+        bool ___m_multiCrafting, int ___m_multiCraftAmount, ref float ___m_craftTimer)
+    {
+        CraftFromChestModule? active = _active;
+        if (active == null || !active.IsEnabled || ___m_craftTimer < 0f || ___m_craftRecipe == null)
+        {
+            if (active != null) active._craftWaitStarted = -1f;
+            return true;
+        }
+
+        ChestOwnership.Result result = active.PrepareRecipe(player, ___m_craftRecipe,
+            ___m_craftUpgradeItem, ___m_multiCrafting ? ___m_multiCraftAmount : 1);
+        if (result == ChestOwnership.Result.Ready)
+        {
+            active._craftWaitStarted = -1f;
+            return true;
+        }
+
+        if (active._craftWaitStarted < 0f) active._craftWaitStarted = Time.realtimeSinceStartup;
+        if (result == ChestOwnership.Result.Unavailable ||
+            Time.realtimeSinceStartup - active._craftWaitStarted >= 5f)
+        {
+            ___m_craftTimer = -1f;
+            active._craftWaitStarted = -1f;
+            GameCompat.TryMessage(player, MessageHud.MessageType.Center, "Nearby chest unavailable. Close open chests and try again.");
+            return true;
+        }
+
+        // Show the native progress/cancel controls, but keep the craft clock still
+        // until the owner and inventory updates arrive. Other UI remains responsive.
+        dt = 0f;
+        return true;
+    }
+
+    private static bool DoCraftingPrefix(
+        Player player, Recipe ___m_craftRecipe, ItemDrop.ItemData ___m_craftUpgradeItem,
+        bool ___m_multiCrafting, int ___m_multiCraftAmount, out bool __state)
+    {
+        __state = s_ownedOnly;
+        CraftFromChestModule? active = _active;
+        if (active == null || !active.IsEnabled || ___m_craftRecipe == null) return true;
+        if (active.PrepareRecipe(player, ___m_craftRecipe, ___m_craftUpgradeItem,
+                ___m_multiCrafting ? ___m_multiCraftAmount : 1) != ChestOwnership.Result.Ready)
+            return false;
+        s_ownedOnly = true;
+        return true;
+    }
+
+    private static Exception? DoCraftingFinalizer(Exception? __exception, bool __state)
+    {
+        s_ownedOnly = __state;
+        return __exception;
+    }
+
+    private ChestOwnership.Result PrepareRecipe(Player player, Recipe recipe, ItemDrop.ItemData? upgrade, int amount)
+    {
+        // Vanilla's one-ingredient recipes select an actual item from the backpack.
+        // Leave that existing selection path and no-cost crafting alone.
+        if (recipe.m_requireOnlyOneIngredient || player.NoCostCheat() ||
+            ZoneSystem.instance.GetGlobalKey(GlobalKeys.NoCraftCost)) return ChestOwnership.Result.Ready;
+        return PrepareResources(player, recipe.m_resources, upgrade == null ? 1 : upgrade.m_quality + 1, amount);
+    }
+
+    private static bool TryPlacePiecePrefix(
+        Player __instance, Piece piece, bool ___m_noPlacementCost, ref bool __result)
+    {
+        CraftFromChestModule? active = _active;
+        if (active == null || !active.IsEnabled || !active._includeBuildPlacement.Value ||
+            ___m_noPlacementCost || ZoneSystem.instance.GetGlobalKey(piece.FreeBuildKey())) return true;
+
+        ChestOwnership.Result result = active.PrepareResources(__instance, piece.m_resources, 0, 1);
+        if (result == ChestOwnership.Result.Ready) return true;
+
+        // Never replay a build input after an asynchronous transfer: the player may
+        // have moved the cursor or selected another piece while waiting for its owner.
+        GameCompat.TryMessage(__instance, MessageHud.MessageType.Center,
+            result == ChestOwnership.Result.Pending
+                ? "Waiting for nearby chest. Try placing again in a moment."
+                : "Nearby chest unavailable. Close open chests and try again.");
+        __result = false;
+        return false;
+    }
+
+    private ChestOwnership.Result PrepareResources(Player player, Piece.Requirement[] requirements, int quality, int multiplier)
+    {
+        IReadOnlyList<Inventory> chests = GetChestInventories(player);
+        var totals = new Dictionary<string, int>(StringComparer.Ordinal);
+        foreach (Piece.Requirement requirement in requirements)
+        {
+            if (requirement.m_resItem == null ||
+                (quality > 0 && !GameCompat.IsCraftingRequirementActive(player, requirement))) continue;
+            string name = requirement.m_resItem.m_itemData.m_shared.m_name;
+            int count = requirement.GetAmount(quality) * multiplier;
+            if (count <= 0) continue;
+            totals.TryGetValue(name, out int previous);
+            totals[name] = checked(previous + count);
+        }
+
+        foreach (KeyValuePair<string, int> requirement in totals)
+        {
+            int remaining = requirement.Value - player.GetInventory().CountItems(requirement.Key);
+            // Use owned sources first. Acquire remote sources one at a time, and
+            // recount from their current inventory before authorizing any output.
+            for (int pass = 0; pass < 2 && remaining > 0; pass++)
+            {
+                foreach (Inventory inventory in chests)
+                {
+                    if (remaining <= 0) break;
+                    Container? container = _scanner.FindContainer(inventory);
+                    if (container == null || container.IsOwner() != (pass == 0)) continue;
+                    if (inventory.CountItems(requirement.Key) <= 0) continue;
+                    ChestOwnership.Result state = ChestOwnership.Prepare(container, player);
+                    if (state != ChestOwnership.Result.Ready) return state;
+                    remaining -= inventory.CountItems(requirement.Key);
+                }
+            }
+            if (remaining > 0) return ChestOwnership.Result.Unavailable;
+        }
+        return ChestOwnership.Result.Ready;
+    }
+
     private static void PatchPostfix(
         Harmony harmony,
         Type declaringType,
@@ -150,7 +287,7 @@ public sealed class CraftFromChestModule : IFeatureModule
         }
 
         IReadOnlyList<Inventory> chests = active.GetChestInventories(__instance);
-        __result = HasRecipeRequirements(__instance.GetInventory(), chests, recipe, qualityLevel, amount);
+        __result = HasRecipeRequirements(__instance, chests, recipe, qualityLevel, amount);
     }
 
     private static void HaveRequirementItemsPostfix(
@@ -168,7 +305,7 @@ public sealed class CraftFromChestModule : IFeatureModule
         }
 
         IReadOnlyList<Inventory> chests = active.GetChestInventories(__instance);
-        __result = HasRecipeRequirements(__instance.GetInventory(), chests, piece, qualityLevel, amount);
+        __result = HasRecipeRequirements(__instance, chests, piece, qualityLevel, amount);
     }
 
     private static void HavePieceRequirementsPostfix(
@@ -238,11 +375,12 @@ public sealed class CraftFromChestModule : IFeatureModule
         }
 
         Inventory playerInventory = __instance.GetInventory();
-        IReadOnlyList<Inventory> chests = active.GetChestInventories(__instance);
+        IReadOnlyList<Inventory> chests = active.GetChestInventories(__instance, ownedOnly: true);
 
         foreach (Piece.Requirement requirement in requirements)
         {
-            if (requirement.m_resItem == null)
+            if (requirement.m_resItem == null ||
+                (qualityLevel > 0 && !GameCompat.IsCraftingRequirementActive(__instance, requirement)))
             {
                 continue;
             }
@@ -317,25 +455,34 @@ public sealed class CraftFromChestModule : IFeatureModule
         }
     }
 
-    private IReadOnlyList<Inventory> GetChestInventories(Player player)
+    private IReadOnlyList<Inventory> GetChestInventories(Player player, bool ownedOnly = false)
     {
-        return _scanner.GetInventories(
+        IReadOnlyList<Inventory> inventories = _scanner.GetInventories(
             player,
             _range.Value,
             _ignoreWardedChests.Value,
             _cacheSeconds.Value);
+        if (!ownedOnly && !s_ownedOnly) return inventories;
+        _ownedInventories.Clear();
+        foreach (Inventory inventory in inventories)
+        {
+            Container? container = _scanner.FindContainer(inventory);
+            if (container != null && container.IsOwner()) _ownedInventories.Add(inventory);
+        }
+        return _ownedInventories;
     }
 
     private static bool HasRecipeRequirements(
-        Inventory playerInventory,
+        Player player,
         IReadOnlyList<Inventory> chests,
         Recipe recipe,
         int qualityLevel,
         int multiplier)
     {
+        Inventory playerInventory = player.GetInventory();
         foreach (Piece.Requirement requirement in recipe.m_resources)
         {
-            if (requirement.m_resItem == null)
+            if (requirement.m_resItem == null || !GameCompat.IsCraftingRequirementActive(player, requirement))
             {
                 continue;
             }

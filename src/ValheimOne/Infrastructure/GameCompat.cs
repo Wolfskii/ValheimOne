@@ -20,6 +20,29 @@ internal static class GameCompat
     private const BindingFlags AnyInstance =
         BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance;
 
+    private static readonly Lazy<FieldInfo?> ExploredMapField = new(
+        () => TryResolve(() => AccessTools.Field(typeof(Minimap), "m_explored")));
+
+    public static bool TryGetExploredMap(Minimap minimap, out ExplorationBitmap bitmap)
+    {
+        // Valheim 1.0 uses BitArray; older worlds/builds use bool[]. Resolve the
+        // field untyped once per sync operation, never once per map pixel.
+        return ExplorationBitmap.TryWrap(ExploredMapField.Value?.GetValue(minimap), out bitmap);
+    }
+
+    private static readonly FieldInfo? StationUpgraderField = AccessTools.Field(typeof(CraftingStation), "m_upgrader");
+    private static readonly FieldInfo? UpgraderResourceField = AccessTools.Field(typeof(Piece.Requirement), "m_upgraderResource");
+
+    public static bool IsCraftingRequirementActive(Player player, Piece.Requirement requirement)
+    {
+        // 1.0 distinguishes upgrader ingredients from the normal recipe costs.
+        // Older builds have neither field and retain their original full list.
+        if (StationUpgraderField == null || UpgraderResourceField == null) return true;
+        CraftingStation? station = player.GetCurrentCraftingStation();
+        bool upgrader = station != null && (bool)StationUpgraderField.GetValue(station);
+        return upgrader == (bool)UpgraderResourceField.GetValue(requirement);
+    }
+
     // ------------ ZoneSystem.m_locationInstances
     // 1.0 keys the dictionary by Vector2s (short x, short y); 0.221 by Vector2i.
     // The field name did not change, only its signature, so a statically bound read

@@ -101,6 +101,13 @@ jobs:
           set -euo pipefail
           tools/package-release.sh
 
+      - name: Enabled map-sharing and chest runtime regressions from packaged DLL
+        shell: bash
+        run: |
+          set -euo pipefail
+          VALHEIMONE_PLUGIN_ZIP="${PWD}/artifacts/release/ValheimOne-${{ steps.version.outputs.version }}.zip" \
+            tools/runtime-regression.sh
+
       - name: Assert deterministic packaging
         shell: bash
         env:

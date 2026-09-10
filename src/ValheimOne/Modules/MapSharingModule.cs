@@ -24,8 +24,6 @@ public sealed class MapSharingModule : IFeatureModule, IVersionHandshakeExtensio
     // change between game builds (m_explored became a BitArray in 0.221.13). Resolving
     // these eagerly in a static initializer made an incompatible build a hard plugin
     // load failure, so a client-only feature could take down the whole server mod.
-    private static readonly AccessTools.FieldRef<Minimap, bool[]>? ExploredField =
-        TryFieldRef<bool[]>("m_explored");
     private static readonly AccessTools.FieldRef<Minimap, Texture2D>? FogTextureField =
         TryFieldRef<Texture2D>("m_fogTexture");
 
@@ -285,25 +283,32 @@ public sealed class MapSharingModule : IFeatureModule, IVersionHandshakeExtensio
 
     private void BeginClientMap(Minimap minimap)
     {
+        if (!SharingActive)
+        {
+            return;
+        }
+
         // Bail before adopting the minimap: every other client-map path is gated on
         // _clientMinimap being set, so refusing here disables the feature cleanly on a
         // game build whose Minimap fields we cannot read.
-        if (ExploredField == null || FogTextureField == null)
+        if (!GameCompat.TryGetExploredMap(minimap, out ExplorationBitmap explored) ||
+            FogTextureField == null)
         {
+            ResetClientState();
             _log.Warning(
                 "Shared exploration is unavailable on this Valheim build; the minimap " +
                 "fields could not be read. Every other feature is unaffected.");
             return;
         }
 
-        _clientMinimap = minimap;
-        bool[] explored = ExploredField(minimap);
         int size = minimap.m_textureSize;
-        if (!IsValidDimensions(size, explored.Length) || !SharingActive)
+        if (!IsValidDimensions(size, explored.Length))
         {
+            ResetClientState();
             return;
         }
 
+        _clientMinimap = minimap;
         _clientQueue.Reset();
         _clientInbound = null;
         _clientSent = new bool[explored.Length];
@@ -314,7 +319,7 @@ public sealed class MapSharingModule : IFeatureModule, IVersionHandshakeExtensio
         {
             EnsureServerWorld(net, size);
             MergeIntoServer(explored, size);
-            Array.Copy(explored, _clientSent, explored.Length);
+            explored.CopyTo(_clientSent);
             return;
         }
 
@@ -339,8 +344,8 @@ public sealed class MapSharingModule : IFeatureModule, IVersionHandshakeExtensio
         float now = Time.realtimeSinceStartup;
         if (now >= _nextClientSyncAt && _clientQueue.IsIdle)
         {
-            bool[] explored = ExploredField!(minimap);
-            if (IsValidDimensions(minimap.m_textureSize, explored.Length) && sent.Length == explored.Length)
+            if (GameCompat.TryGetExploredMap(minimap, out ExplorationBitmap explored) &&
+                IsValidDimensions(minimap.m_textureSize, explored.Length) && sent.Length == explored.Length)
             {
                 QueueTransfer(_clientQueue, explored, sent, minimap.m_textureSize, omitEmpty: true);
             }
@@ -368,8 +373,8 @@ public sealed class MapSharingModule : IFeatureModule, IVersionHandshakeExtensio
         float now = Time.realtimeSinceStartup;
         if (_clientMinimap != null && _clientSent != null && now >= _nextClientSyncAt)
         {
-            bool[] localExplored = ExploredField!(_clientMinimap);
-            if (IsValidDimensions(_clientMinimap.m_textureSize, localExplored.Length) &&
+            if (GameCompat.TryGetExploredMap(_clientMinimap, out ExplorationBitmap localExplored) &&
+                IsValidDimensions(_clientMinimap.m_textureSize, localExplored.Length) &&
                 localExplored.Length == _clientSent.Length)
             {
                 MergeNewLocalPixels(localExplored, _clientSent, _clientMinimap.m_textureSize);
@@ -602,7 +607,9 @@ public sealed class MapSharingModule : IFeatureModule, IVersionHandshakeExtensio
     private bool ApplyClientRanges(int textureSize, IReadOnlyList<ExploredMapRange> ranges)
     {
         Minimap? minimap = _clientMinimap;
-        if (minimap == null || minimap.m_textureSize != textureSize)
+        if (minimap == null || minimap.m_textureSize != textureSize ||
+            !GameCompat.TryGetExploredMap(minimap, out ExplorationBitmap explored) ||
+            !IsValidDimensions(textureSize, explored.Length))
         {
             _log.Warning($"Ignored {MapRpc} map size {textureSize}; local minimap does not match.");
             return false;
@@ -615,12 +622,13 @@ public sealed class MapSharingModule : IFeatureModule, IVersionHandshakeExtensio
     private void ApplyRangesToClientBitmap(IReadOnlyList<ExploredMapRange> ranges, int textureSize)
     {
         Minimap? minimap = _clientMinimap;
-        if (minimap == null)
+        if (minimap == null ||
+            !GameCompat.TryGetExploredMap(minimap, out ExplorationBitmap explored) ||
+            !IsValidDimensions(textureSize, explored.Length))
         {
             return;
         }
 
-        bool[] explored = ExploredField!(minimap);
         bool[]? sent = _clientSent;
         foreach (ExploredMapRange range in ranges)
         {
@@ -640,12 +648,12 @@ public sealed class MapSharingModule : IFeatureModule, IVersionHandshakeExtensio
     private void RefreshClientFog()
     {
         Minimap? minimap = _clientMinimap;
-        if (minimap == null)
+        if (minimap == null ||
+            !GameCompat.TryGetExploredMap(minimap, out ExplorationBitmap explored))
         {
             return;
         }
 
-        bool[] explored = ExploredField!(minimap);
         Texture2D fogTexture = FogTextureField!(minimap);
         Color32[] pixels = fogTexture.GetPixels32();
         if (pixels.Length != explored.Length)
@@ -717,7 +725,7 @@ public sealed class MapSharingModule : IFeatureModule, IVersionHandshakeExtensio
 
     private void QueueTransfer(
         AckGatedChunkQueue<OutboundMapChunk> queue,
-        bool[] explored,
+        ExplorationBitmap explored,
         bool[]? alreadySent,
         int _serverUnionSize,
         bool omitEmpty = false)
@@ -746,7 +754,7 @@ public sealed class MapSharingModule : IFeatureModule, IVersionHandshakeExtensio
     }
 
     private static List<ExploredMapRange[]> EncodeRanges(
-        bool[] explored,
+        ExplorationBitmap explored,
         bool[]? alreadySent,
         int textureSize)
     {
@@ -835,7 +843,7 @@ public sealed class MapSharingModule : IFeatureModule, IVersionHandshakeExtensio
         Array.Clear(_serverPendingDelta, 0, _serverPendingDelta.Length);
     }
 
-    private void MergeNewLocalPixels(bool[] explored, bool[] sent, int textureSize)
+    private void MergeNewLocalPixels(ExplorationBitmap explored, bool[] sent, int textureSize)
     {
         if (_serverUnion == null || _serverPendingDelta == null || GetServerSize() != textureSize)
         {
@@ -862,7 +870,7 @@ public sealed class MapSharingModule : IFeatureModule, IVersionHandshakeExtensio
         _serverDirty |= changed;
     }
 
-    private void MergeIntoServer(bool[] explored, int textureSize)
+    private void MergeIntoServer(ExplorationBitmap explored, int textureSize)
     {
         if (_serverUnion == null || _serverPendingDelta == null || GetServerSize() != textureSize)
         {

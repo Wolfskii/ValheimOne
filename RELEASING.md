@@ -66,6 +66,16 @@ tools/contract-test.sh --bless
 
 Never bless solely to make a failing check pass.
 
+Also run the enabled-feature regressions on a native Linux throwaway testserver:
+
+```bash
+tools/runtime-regression.sh
+```
+
+This enables Shared Exploration and Craft From Chest and uses actual game minimaps, containers and inventory serialization. It checks both exploration storage formats, two map contributions, fog updates, periodic persistence/reload, chest access restrictions and exact resource deduction. A controlled two-replica transport exercises grants arriving before ownership/data and rejects stale or spoofed grants. Craft/build guards must prevent output while a transfer is pending. This is a runtime component and protocol test, not a pair of retail clients joining over Steam/PlayFab.
+
+The runner restores the testserver's previous plugin/config files and stops its own game process. Results and logs are under `artifacts/runtime-regression/`. `VALHEIM_MODDING_DIR` selects a separate harness root. Do not run it against an occupied or customer server. CI repeats it from the packaged DLL before creating the release draft.
+
 ## 5. Package
 
 ```bash
@@ -106,6 +116,14 @@ unzip -o <repo>/artifacts/release/ValheimOne-<version>.zip -d testserver/
 ```
 
 Both must print `PASS`. Do not tag on a failed or skipped smoke.
+
+On a native Linux harness, the packaged enabled-feature regression is also a package smoke:
+
+```bash
+VALHEIMONE_PLUGIN_ZIP="$PWD/artifacts/release/ValheimOne-<version>.zip" tools/runtime-regression.sh
+```
+
+It requires the ZIP's DLL to match the tested build and boots that extracted DLL with both affected features enabled.
 
 ## 8. Tag
 
