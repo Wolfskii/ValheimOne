@@ -4,15 +4,16 @@ All notable changes to ValheimOne will be documented in this file. This project 
 
 ## [Unreleased]
 
-## [0.13.9] - 2026-09-11
+## [0.13.10] - 2026-09-11
 
 ### Fixed
 
+- Release archives normalize file permissions so different build-machine umasks produce identical ZIPs.
 - Crossplay startup no longer gets stuck when a previous lobby remains in the join-code index after its owner leaves. An ownerless collision takes the game's normal join-code regeneration path. Unique owned lobbies, other collisions and empty-index retries retain their existing behavior.
 
 ### Upgrade
 
-- This fix runs on the server. Update ValheimOne and restart the server when the group is ready; existing settings and client compatibility are unchanged. Verified against Valheim 1.0.12.
+- This fix runs on the server. Update ValheimOne and restart the server when the group is ready; existing settings and client compatibility are unchanged. Verified against Valheim 1.0.12. The 0.13.9 verification candidate was not published.
 
 ## [0.13.8] - 2026-09-11
 

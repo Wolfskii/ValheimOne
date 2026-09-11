@@ -77,6 +77,11 @@ mkdir -p "${out_dir}" "${stage_root}"
 
 make_zip() {
     local stage_dir="$1" zip_path="$2"
+    # ZIP records Unix mode bits. Normalize them independently of the builder's
+    # umask while retaining the executable launchers and native libraries.
+    find "$stage_dir" -type d -exec chmod 0755 {} +
+    find "$stage_dir" -type f -perm /111 -exec chmod 0755 {} +
+    find "$stage_dir" -type f ! -perm /111 -exec chmod 0644 {} +
     rm -f "${zip_path}"
     # TZ=UTC on the touch as well as the zip: touch -t interprets the stamp in
     # the machine's local timezone, so without it two machines in different
