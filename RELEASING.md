@@ -76,6 +76,10 @@ This enables Shared Exploration and Craft From Chest and uses actual game minima
 
 The runner also enables the loopback web console with a generated test token and executes `save`, `vo save`, a read-only command, and consecutive saves. It requires successful HTTP responses AND fresh native `World save (5/5) done` events; an accepted request alone is not completion proof. The console observer records full native exception stacks for startup timing investigations and can also run alongside older released DLLs.
 
+Station checks enable automation and cooking, verify native RPC acceptance and exact input counts, observe a real smelter product, and test live production overrides plus restoration for all six supported station prefabs. Run them with the current game's original assemblies; publicized references alone do not prove runtime access.
+
+`tools/browser-regression.py <fixture-url>` checks the native public map on a remote headless browser at desktop and phone widths, including an old fog-disabled preference, simulated lock changes through the polling fallback, and an injected fog-download failure. `VALHEIMONE_BROWSER_HOLD_SECONDS` can hold the disposable runtime fixture for up to 600 seconds; `VALHEIMONE_BROWSER_BIND` defaults to loopback. A wildcard bind uses `*`, not `0.0.0.0`, because Mono's HTTP listener validates the host prefix. Restrict any remote fixture to the authorized test worker, then remove that access and stop the fixture. Creating `artifacts/runtime-regression/browser-done` ends the hold early.
+
 The runner restores the testserver's previous plugin/config files and stops its own game process. Results and logs are under `artifacts/runtime-regression/`. `VALHEIM_MODDING_DIR` selects a separate harness root. Do not run it against an occupied or customer server. CI repeats it from the packaged DLL before creating the release draft.
 
 ## 5. Package

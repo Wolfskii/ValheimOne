@@ -60,6 +60,8 @@ public sealed class RuntimeRegression : BaseUnityPlugin
             TestBitmapStorage();
             TestMapExchange();
             TestChestTransfer();
+            TestStations();
+            TestProductionSettings();
             string result = $"RUNTIME REGRESSION PASS assertions={_assertions} game={(global::Version.GetVersionString())}";
             Logger.LogInfo(result);
             File.WriteAllText(Path.Combine(_root, "result.txt"), result + "\n");
@@ -259,7 +261,7 @@ public sealed class RuntimeRegression : BaseUnityPlugin
         var preview = new ChestScanner(includeRemote: true);
         var automation = new ChestScanner();
         Check(Contains(preview.GetInventories(player, 20, false, 1), replica.GetInventory()), "remote-owned chest appears in preview");
-        Check(!Contains(automation.GetInventories(player, 20, false, 1), replica.GetInventory()), "automation retains owned-only inventory access");
+        Check(!Contains(automation.GetInventories(player, 20, false, 1), replica.GetInventory()), "default scanner retains owned-only inventory access");
         Set(replica, "m_inUse", true);
         Check(!Contains(preview.GetInventories(player, 20, false, 1), replica.GetInventory()), "open chest excluded");
         Set(replica, "m_inUse", false);
@@ -381,6 +383,129 @@ public sealed class RuntimeRegression : BaseUnityPlugin
             "owner refuses open chest without handing it away");
         Set(authority, "m_inUse", false);
         Packets.Clear();
+    }
+
+    private GameObject NewStation(string name, Vector3 position)
+    {
+        GameObject prefab = ZNetScene.instance.GetPrefab(name);
+        Check(prefab != null, "native station prefab exists: " + name);
+        GameObject obj = Instantiate(prefab, position, Quaternion.identity)!;
+        _objects.Add(obj);
+        return obj;
+    }
+
+    private void TestStations()
+    {
+        Vector3 position = new Vector3(500, 600, 500);
+        Player player = NewPlayer(position);
+        Container chest = NewChest(position, 8);
+        chest.GetInventory().AddItem(ObjectDB.instance.GetItemPrefab("Coal"), 8);
+        chest.GetInventory().AddItem(ObjectDB.instance.GetItemPrefab("CopperOre"), 8);
+        chest.GetInventory().AddItem(ObjectDB.instance.GetItemPrefab("RawMeat"), 8);
+        var scanner = new ChestScanner(includeRemote: true);
+        IReadOnlyList<Inventory> inventories = scanner.GetInventories(player, 20, false, 1);
+        Smelter smelter = NewStation("smelter", position + Vector3.right * 2).GetComponent<Smelter>();
+        ZNetView view = smelter.GetComponent<ZNetView>();
+        Check(smelter.m_secPerProduct == 5f && smelter.m_maxOre == 12 && smelter.m_maxFuel == 12,
+            "production overrides applied on native smelter Awake");
+
+        int coal = chest.GetInventory().CountItems("$item_coal");
+        Call(typeof(StationAutomationModule), "TryAddSmelterFuel", smelter, view, inventories, scanner, player);
+        Check((float)Call(smelter, "GetFuel")! == 1f && chest.GetInventory().CountItems("$item_coal") == coal - 1,
+            "native smelter fuel RPC consumes and adds exactly one fuel");
+        ItemDrop.ItemData ore = chest.GetInventory().GetItem("$item_copperore");
+        FieldInfo cheated = AccessTools.Field(typeof(ItemDrop.ItemData), "m_cheated");
+        cheated?.SetValue(ore, true);
+        int ores = chest.GetInventory().CountItems("$item_copperore");
+        Call(typeof(StationAutomationModule), "TryAddSmelterOre", smelter, view, inventories, scanner, player);
+        Check((int)Call(smelter, "GetQueueSize")! == 1 && chest.GetInventory().CountItems("$item_copperore") == ores - 1,
+            "native ore RPC receives full payload and queues consumed input");
+        Check(view.GetZDO().GetBool(ZDOVars.s_cheatedQueued), "smelter RPC preserves the source item's cheated flag");
+        ItemDrop.ItemData invalid = ore.Clone(); invalid.m_dropPrefab = null;
+        Check(!GameCompat.TryGetSmelterItemArguments(invalid, out _), "invalid station input cannot build a consumable RPC payload");
+
+        // Advance only this station's native accumulator, then observe a real product.
+        var existingDrops = new HashSet<ItemDrop>(UnityEngine.Object.FindObjectsByType<ItemDrop>(FindObjectsSortMode.None));
+        view.GetZDO().Set(ZDOVars.s_fuel, 10f);
+        Call(smelter, "SetAccumulator", 5f);
+        Call(smelter, "UpdateSmelter");
+        int copper = 0;
+        foreach (ItemDrop drop in UnityEngine.Object.FindObjectsByType<ItemDrop>(FindObjectsSortMode.None))
+        {
+            if (existingDrops.Contains(drop)) continue;
+            _objects.Add(drop.gameObject);
+            if (drop.m_itemData.m_shared.m_name == "$item_copper") copper += drop.m_itemData.m_stack;
+        }
+        Check(copper == 1, "native production loop turns the queued ore into one copper output");
+
+        Smelter kiln = NewStation("charcoal_kiln", position + Vector3.back * 3).GetComponent<Smelter>();
+        ZNetView kilnView = kiln.GetComponent<ZNetView>();
+        int wood = chest.GetInventory().CountItems("$item_wood");
+        Call(typeof(StationAutomationModule), "TryAddSmelterOre", kiln, kilnView, inventories, scanner, player);
+        Check((int)Call(kiln, "GetQueueSize")! == 1 && chest.GetInventory().CountItems("$item_wood") == wood - 1,
+            "native kiln queue receives the wood taken from its chest");
+
+        CookingStation cooking = NewStation("piece_cookingstation", position + Vector3.left * 3).GetComponent<CookingStation>();
+        ZNetView cookingView = cooking.GetComponent<ZNetView>();
+        string rawName = ObjectDB.instance.GetItemPrefab("RawMeat").GetComponent<ItemDrop>().m_itemData.m_shared.m_name;
+        ItemDrop.ItemData raw = chest.GetInventory().GetItem(rawName);
+        Check(raw != null, "native raw-meat input is present");
+        cheated?.SetValue(raw, true);
+        int rawCount = raw!.m_stack;
+        Call(typeof(CookingStationModule), "TryConsumeAndInvokeRaw", cooking, cookingView, inventories, scanner, player);
+        Check(cookingView.GetZDO().GetString("slot0") == "RawMeat" &&
+            chest.GetInventory().CountItems(rawName) == rawCount - 1,
+            "native cooking RPC puts the consumed raw food into a cooking slot");
+        Check(cookingView.GetZDO().GetBool(ZDOVars.s_cheatedQueued), "cooking RPC preserves the source item's cheated flag");
+
+        Set(chest, "m_inUse", true);
+        ores = chest.GetInventory().CountItems("$item_copperore");
+        int queued = (int)Call(smelter, "GetQueueSize")!;
+        Call(typeof(StationAutomationModule), "TryAddSmelterOre", smelter, view, inventories, scanner, player);
+        Check(chest.GetInventory().CountItems("$item_copperore") == ores && (int)Call(smelter, "GetQueueSize")! == queued,
+            "automation rechecks busy chests before removing an item");
+        Set(chest, "m_inUse", false);
+
+        ZDO chestZdo = ChestScanner.GetNetworkView(chest)!.GetZDO();
+        chestZdo.SetOwner(RemotePeer + 10);
+        ores = chest.GetInventory().CountItems("$item_copperore");
+        Call(typeof(StationAutomationModule), "TryAddSmelterOre", smelter, view, inventories, scanner, player);
+        Check(chest.GetInventory().CountItems("$item_copperore") == ores && (int)Call(smelter, "GetQueueSize")! == queued,
+            "automation waits for foreign chest ownership without consuming input");
+        Check(Packets.Count > 0, "automation requests a safe chest handoff");
+        Packets.Clear();
+    }
+
+    private void TestProductionSettings()
+    {
+        var settings = new ValheimOneConfig(Path.Combine(_root, "production-overlay.cfg"));
+        var module = new ProductionSpeedsModule(settings.Features, new ModLogger(Logger));
+        object? previous = Get(typeof(ProductionSpeedsModule), "_active");
+        var stations = new List<(Smelter Station, float Seconds, int Queue)>();
+        string[] prefabs = { "smelter", "blastfurnace", "charcoal_kiln", "windmill", "piece_spinningwheel", "eitrrefinery" };
+        string[] prefixes = { "Smelter", "Furnace", "Kiln", "Windmill", "SpinningWheel", "EitrRefinery" };
+        try
+        {
+            Set(typeof(ProductionSpeedsModule), "_active", module);
+            for (int i = 0; i < prefabs.Length; i++)
+            {
+                Smelter station = NewStation(prefabs[i], new Vector3(700 + i * 5, 600, 700)).GetComponent<Smelter>();
+                stations.Add((station, station.m_secPerProduct, station.m_maxOre));
+            }
+            string overlay = "[ProductionSpeeds] / Enabled=true\n";
+            foreach (string prefix in prefixes)
+                overlay += "[ProductionSpeeds] / " + prefix + "ProductionSeconds=7\n" +
+                    "[ProductionSpeeds] / " + prefix + "MaxQueue=13\n";
+            Check(settings.ApplyOverlay(overlay) == 13, "all six station production settings arrive through the synced overlay");
+            foreach (var row in stations)
+                Check(row.Station.m_secPerProduct == 7 && row.Station.m_maxOre == 13,
+                    "live production settings apply to " + row.Station.name);
+            settings.ClearOverlay();
+            foreach (var row in stations)
+                Check(row.Station.m_secPerProduct == row.Seconds && row.Station.m_maxOre == row.Queue,
+                    "disabling production overrides restores " + row.Station.name);
+        }
+        finally { Set(typeof(ProductionSpeedsModule), "_active", previous); }
     }
 
     private static void CopyItems(ZDO source, ZDO destination)

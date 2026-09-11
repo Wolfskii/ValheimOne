@@ -21,6 +21,44 @@ internal static class GameCompat
     private const BindingFlags AnyInstance =
         BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance;
 
+    private static readonly Lazy<int> SmelterItemRpcShape = new(
+        () => ResolveItemRpcShape(typeof(Smelter), "RPC_AddOre"));
+    private static readonly Lazy<int> CookingItemRpcShape = new(
+        () => ResolveItemRpcShape(typeof(CookingStation), "RPC_AddItem"));
+    private static readonly FieldInfo? ItemCheatedField = AccessTools.Field(typeof(ItemDrop.ItemData), "m_cheated");
+
+    public static bool TryGetSmelterItemArguments(ItemDrop.ItemData item, out object[] arguments) =>
+        TryGetItemArguments(SmelterItemRpcShape.Value, item, out arguments);
+
+    public static bool TryGetCookingItemArguments(ItemDrop.ItemData item, out object[] arguments) =>
+        TryGetItemArguments(CookingItemRpcShape.Value, item, out arguments);
+
+    private static int ResolveItemRpcShape(Type station, string name)
+    {
+        MethodInfo? method = AccessTools.Method(station, name);
+        ParameterInfo[]? parameters = method?.GetParameters();
+        if (parameters == null || parameters.Length < 2 ||
+            parameters[0].ParameterType != typeof(long) || parameters[1].ParameterType != typeof(string)) return 0;
+        if (parameters.Length == 2) return 1;
+        return parameters.Length == 3 && parameters[2].ParameterType == typeof(bool) ? 2 : 0;
+    }
+
+    private static bool TryGetItemArguments(int shape, ItemDrop.ItemData item, out object[] arguments)
+    {
+        arguments = Array.Empty<object>();
+        if (item == null || item.m_dropPrefab == null || shape == 0) return false;
+        if (shape == 1)
+        {
+            arguments = new object[] { item.m_dropPrefab.name };
+            return true;
+        }
+        // 1.0 added the item's cheated flag to both RPC payloads. Read it from
+        // the actual item, and refuse consumption if a future shape is unknown.
+        if (ItemCheatedField?.FieldType != typeof(bool)) return false;
+        arguments = new object[] { item.m_dropPrefab.name, (bool)ItemCheatedField.GetValue(item) };
+        return true;
+    }
+
     public static void ApplyHeadlessSaveCompatibility(Harmony harmony)
     {
         // This Nintendo-specific rate check was added in 1.0. Older builds have

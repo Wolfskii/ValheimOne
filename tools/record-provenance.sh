@@ -14,7 +14,7 @@ global_json="${repo_root}/global.json"
 version_file="${repo_root}/src/ValheimOne/Networking/VersionInfo.cs"
 package_script="${repo_root}/tools/package-release.sh"
 provenance="${repo_root}/tools/release/provenance.tsv"
-server_manifest="${HOME}/valheim-modding/server/steamapps/appmanifest_896660.acf"
+server_manifest="${VALHEIM_SERVER_DIR:-${HOME}/valheim-modding/server}/steamapps/appmanifest_896660.acf"
 skip_build=false
 force=false
 

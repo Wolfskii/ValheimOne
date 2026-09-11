@@ -4,9 +4,9 @@
     <LangVersion>10</LangVersion>
     <Nullable>enable</Nullable>
     <AssemblyName>ValheimOne.RuntimeRegression</AssemblyName>
-    <ValheimManaged>$(HOME)/valheim-modding/server/valheim_server_Data/Managed</ValheimManaged>
-    <ValheimPublicized>$(HOME)/valheim-modding/publicized</ValheimPublicized>
-    <BepInExCore>$(HOME)/valheim-modding/bepinex/BepInExPack_Valheim/BepInEx/core</BepInExCore>
+    <ValheimManaged Condition="'$(ValheimManaged)' == ''">$(HOME)/valheim-modding/server/valheim_server_Data/Managed</ValheimManaged>
+    <ValheimPublicized Condition="'$(ValheimPublicized)' == ''">$(HOME)/valheim-modding/publicized</ValheimPublicized>
+    <BepInExCore Condition="'$(BepInExCore)' == ''">$(HOME)/valheim-modding/bepinex/BepInExPack_Valheim/BepInEx/core</BepInExCore>
   </PropertyGroup>
   <ItemGroup>
     <ProjectReference Include="../../src/ValheimOne/ValheimOne.csproj" />

@@ -4,6 +4,7 @@ using System.Runtime.CompilerServices;
 using HarmonyLib;
 using UnityEngine;
 using ValheimOne.Configuration;
+using ValheimOne.Infrastructure;
 
 namespace ValheimOne.Modules;
 
@@ -93,6 +94,7 @@ public sealed class CookingStationModule : IFeatureModule
         // Cooking simulation runs on the zone owner. Patches remain installed so the effective
         // server overlay can hot-enable this synced module without repatching Harmony.
         _active = this;
+        ChestOwnership.Install(harmony, Section, () => IsEnabled);
 
         PatchPostfix(harmony, "Awake", nameof(CookingStationAwakePostfix));
         PatchPostfix(harmony, "IsFireLit", nameof(IsFireLitPostfix));
@@ -224,12 +226,12 @@ public sealed class CookingStationModule : IFeatureModule
 
         if (needsFuel)
         {
-            TryConsumeAndInvokeFuel(__instance.m_fuelItem, networkView, inventories);
+            TryConsumeAndInvokeFuel(__instance.m_fuelItem, networkView, inventories, state.Scanner, player);
         }
 
         if (canFeedRaw)
         {
-            TryConsumeAndInvokeRaw(__instance, networkView, inventories);
+            TryConsumeAndInvokeRaw(__instance, networkView, inventories, state.Scanner, player);
         }
     }
 
@@ -351,7 +353,7 @@ public sealed class CookingStationModule : IFeatureModule
     private static bool TryConsumeAndInvokeFuel(
         ItemDrop fuelItem,
         ZNetView networkView,
-        IReadOnlyList<Inventory> inventories)
+        IReadOnlyList<Inventory> inventories, ChestScanner scanner, Player player)
     {
         if (fuelItem == null)
         {
@@ -361,6 +363,8 @@ public sealed class CookingStationModule : IFeatureModule
         string fuelName = fuelItem.m_itemData.m_shared.m_name;
         foreach (Inventory inventory in inventories)
         {
+            if (inventory.GetItem(fuelName) == null || !scanner.TryPrepareInventory(inventory, player) ||
+                !networkView.IsOwner()) continue;
             ItemDrop.ItemData? item = inventory.GetItem(fuelName);
             if (item != null && inventory.RemoveOneItem(item))
             {
@@ -375,7 +379,7 @@ public sealed class CookingStationModule : IFeatureModule
     private static bool TryConsumeAndInvokeRaw(
         CookingStation station,
         ZNetView networkView,
-        IReadOnlyList<Inventory> inventories)
+        IReadOnlyList<Inventory> inventories, ChestScanner scanner, Player player)
     {
         if (!CanFeedRaw(station))
         {
@@ -384,15 +388,17 @@ public sealed class CookingStationModule : IFeatureModule
 
         foreach (Inventory inventory in inventories)
         {
+            if (FindCookableItem(station, inventory) == null || !scanner.TryPrepareInventory(inventory, player)) continue;
             ItemDrop.ItemData? item = FindCookableItem(station, inventory);
-            if (item == null || item.m_dropPrefab == null)
+            if (item == null || !networkView.IsOwner() ||
+                !GameCompat.TryGetCookingItemArguments(item, out object[] arguments))
             {
                 continue;
             }
 
             if (inventory.RemoveOneItem(item))
             {
-                networkView.InvokeRPC(AddItemRpc, item.m_dropPrefab.name);
+                networkView.InvokeRPC(AddItemRpc, arguments);
                 return true;
             }
         }
@@ -472,7 +478,7 @@ public sealed class CookingStationModule : IFeatureModule
 
     private sealed class StationState
     {
-        public ChestScanner Scanner { get; } = new ChestScanner();
+        public ChestScanner Scanner { get; } = new ChestScanner(includeRemote: true);
 
         public float NextCheckAt { get; set; }
     }

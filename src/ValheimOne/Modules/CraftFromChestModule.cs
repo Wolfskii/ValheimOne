@@ -64,7 +64,7 @@ public sealed class CraftFromChestModule : IFeatureModule
         // Crafting and build placement are client-owned game logic. Patches stay installed and
         // consult effective values on every call so a server overlay can hot-enable the feature.
         _active = this;
-        ChestOwnership.Install(harmony, () => IsEnabled);
+        ChestOwnership.Install(harmony, Section, () => IsEnabled);
         harmony.Patch(
             AccessTools.Method(typeof(InventoryGui), "UpdateRecipe", new[] { typeof(Player), typeof(float) }),
             prefix: new HarmonyMethod(typeof(CraftFromChestModule), nameof(UpdateRecipePrefix)));

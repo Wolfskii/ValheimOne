@@ -11,6 +11,9 @@ backup=$(mktemp -d)
 plugins="$server/BepInEx/plugins"
 config="$server/BepInEx/config"
 output="$repo/artifacts/runtime-regression"
+browser_hold=${VALHEIMONE_BROWSER_HOLD_SECONDS:-0}
+[[ $browser_hold =~ ^[0-9]+$ && $browser_hold -le 600 ]] || { echo 'Browser hold must be 0–600 seconds.' >&2; exit 1; }
+export VALHEIMONE_BROWSER_HOLD_SECONDS="$browser_hold"
 console_result="$backup/console-result.txt"
 export CONSOLE_PROBE_TOKEN
 CONSOLE_PROBE_TOKEN=$(python3 -c 'import secrets; print(secrets.token_hex(32))')
@@ -57,9 +60,15 @@ cfg.read(sys.argv[1])
 cfg['CraftFromChest']['Enabled']='true'
 cfg['MapSharing']['Enabled']='true'
 cfg['MapSharing']['SharedExploration']='true'
+cfg['StationAutomation'].update({'Enabled':'true','SmelterAutoFuel':'true','FireplaceAutoFuel':'true'})
+cfg['CookingStation'].update({'Enabled':'true','AutoFuel':'true','AutoFeedRaw':'true','IgnoreFireRequirement':'true'})
+cfg['ProductionSpeeds'].update({'Enabled':'true','SmelterProductionSeconds':'5','SmelterMaxQueue':'12','SmelterMaxFuel':'12'})
 cfg['LiveMap'].update({'Enabled':'true', 'ConsoleEnabled':'true', 'BindIp':'127.0.0.1',
     'Port':'24583', 'TextureSize':'512', 'AccessToken':os.environ['CONSOLE_PROBE_TOKEN'],
     'PublicView':'false', 'StatusPublic':'false'})
+if int(os.environ['VALHEIMONE_BROWSER_HOLD_SECONDS']) > 0:
+    cfg['LiveMap'].update({'PublicView':'true', 'FogMode':'trails', 'FogHideUnexplored':'true',
+        'BindIp':os.environ.get('VALHEIMONE_BROWSER_BIND', '127.0.0.1')})
 with open(sys.argv[2], 'w') as out: cfg.write(out)
 PY
 cp "$repo/tools/fixtures/SmokeWorld.fwl" "$repo/tools/fixtures/SmokeWorld.db" "$backup/worlds/worlds_local/"
@@ -100,6 +109,14 @@ if [[ -f "$console_result" ]]; then
 else
     echo 'HTTP console save probe did not complete.' >&2
     status=1
+fi
+if [[ $status == 0 && $browser_hold -gt 0 ]]; then
+    rm -f "$output/browser-done"
+    echo 'Native browser fixture ready on port 24583.'
+    touch "$output/browser-ready"
+    deadline=$((SECONDS + browser_hold))
+    while (( SECONDS < deadline )) && [[ ! -f "$output/browser-done" ]]; do sleep 1; done
+    rm -f "$output/browser-ready" "$output/browser-done"
 fi
 cleanup
 trap - EXIT

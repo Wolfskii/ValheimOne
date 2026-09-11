@@ -1,4 +1,6 @@
 using System;
+using System.Collections.Generic;
+using System.Linq;
 using System.Runtime.CompilerServices;
 using HarmonyLib;
 using UnityEngine;
@@ -13,16 +15,20 @@ internal static class ChestOwnership
     private const string RequestRpc = "VO_CraftChestRequest";
     private const string ReplyRpc = "VO_CraftChestReply";
     private static readonly ConditionalWeakTable<Container, State> States = new();
-    private static Func<bool>? _enabled;
+    private static readonly Dictionary<string, Func<bool>> EnabledFeatures = new();
     private static int _nextRequest;
 
     internal enum Result { Ready, Pending, Unavailable }
 
-    public static void Install(Harmony harmony, Func<bool> enabled)
+    public static void Install(Harmony harmony, string feature, Func<bool> enabled)
     {
-        _enabled = enabled;
+        EnabledFeatures[feature] = enabled;
+        var awake = AccessTools.Method(typeof(Container), "Awake", Type.EmptyTypes);
+        var register = AccessTools.Method(typeof(ChestOwnership), nameof(Register));
+        if (Harmony.GetPatchInfo(awake)?.Postfixes.Any(p => p.owner == harmony.Id && p.PatchMethod == register) == true)
+            return;
         harmony.Patch(
-            AccessTools.Method(typeof(Container), "Awake", Type.EmptyTypes),
+            awake,
             postfix: new HarmonyMethod(typeof(ChestOwnership), nameof(Register)));
     }
 
@@ -97,7 +103,7 @@ internal static class ChestOwnership
         if (view == null || !view.IsValid() || !view.IsOwner()) return;
         var reply = new ZPackage();
         reply.Write(request);
-        bool granted = _enabled?.Invoke() == true && !ChestScanner.IsBusy(container, view) &&
+        bool granted = EnabledFeatures.Values.Any(enabled => enabled()) && !ChestScanner.IsBusy(container, view) &&
             ChestScanner.HasContainerAccess(container, playerId);
         reply.Write(granted);
         if (granted)

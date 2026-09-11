@@ -4,6 +4,7 @@ using System.Runtime.CompilerServices;
 using HarmonyLib;
 using UnityEngine;
 using ValheimOne.Configuration;
+using ValheimOne.Infrastructure;
 
 namespace ValheimOne.Modules;
 
@@ -82,6 +83,7 @@ public sealed class StationAutomationModule : IFeatureModule
         // that owner is usually a client, so this feature is synced and requires the client mod.
         // Patches remain installed so the effective server overlay can hot-enable automation.
         _active = this;
+        ChestOwnership.Install(harmony, Section, () => IsEnabled);
 
         PatchPostfix(
             harmony,
@@ -146,8 +148,8 @@ public sealed class StationAutomationModule : IFeatureModule
             active._ignoreWardedChests.Value,
             active._checkIntervalSeconds.Value);
 
-        TryAddSmelterFuel(__instance, networkView, inventories);
-        TryAddSmelterOre(__instance, networkView, inventories);
+        TryAddSmelterFuel(__instance, networkView, inventories, state.Scanner, player);
+        TryAddSmelterOre(__instance, networkView, inventories, state.Scanner, player);
     }
 
     private static void UpdateFireplacePostfix(Fireplace __instance)
@@ -193,7 +195,7 @@ public sealed class StationAutomationModule : IFeatureModule
             active._range.Value,
             active._ignoreWardedChests.Value,
             active._checkIntervalSeconds.Value);
-        TryConsumeAndInvokeFuel(__instance.m_fuelItem, networkView, inventories);
+        TryConsumeAndInvokeFuel(__instance.m_fuelItem, networkView, inventories, state.Scanner, player);
     }
 
     private bool TryBeginCheck(StationState state)
@@ -211,7 +213,7 @@ public sealed class StationAutomationModule : IFeatureModule
     private static void TryAddSmelterFuel(
         Smelter smelter,
         ZNetView networkView,
-        IReadOnlyList<Inventory> inventories)
+        IReadOnlyList<Inventory> inventories, ChestScanner scanner, Player player)
     {
         if (smelter.m_maxFuel <= 0 ||
             GetSmelterFuel(smelter) > smelter.m_maxFuel - 1f)
@@ -219,13 +221,13 @@ public sealed class StationAutomationModule : IFeatureModule
             return;
         }
 
-        TryConsumeAndInvokeFuel(smelter.m_fuelItem, networkView, inventories);
+        TryConsumeAndInvokeFuel(smelter.m_fuelItem, networkView, inventories, scanner, player);
     }
 
     private static void TryAddSmelterOre(
         Smelter smelter,
         ZNetView networkView,
-        IReadOnlyList<Inventory> inventories)
+        IReadOnlyList<Inventory> inventories, ChestScanner scanner, Player player)
     {
         if (smelter.m_maxOre <= 0 || GetSmelterQueueSize(smelter) >= smelter.m_maxOre)
         {
@@ -234,8 +236,10 @@ public sealed class StationAutomationModule : IFeatureModule
 
         foreach (Inventory inventory in inventories)
         {
+            if (FindCookableItem(smelter, inventory) == null || !scanner.TryPrepareInventory(inventory, player)) continue;
             ItemDrop.ItemData? item = FindCookableItem(smelter, inventory);
-            if (item == null || item.m_dropPrefab == null)
+            if (item == null || !networkView.IsOwner() ||
+                !GameCompat.TryGetSmelterItemArguments(item, out object[] arguments))
             {
                 continue;
             }
@@ -244,7 +248,7 @@ public sealed class StationAutomationModule : IFeatureModule
             {
                 // This is the vanilla OnAddOre path after item selection: remove one source item
                 // (which calls Inventory.Changed) and ask the owning station to queue its prefab.
-                networkView.InvokeRPC(AddOreRpc, item.m_dropPrefab.name);
+                networkView.InvokeRPC(AddOreRpc, arguments);
                 return;
             }
         }
@@ -253,7 +257,7 @@ public sealed class StationAutomationModule : IFeatureModule
     private static bool TryConsumeAndInvokeFuel(
         ItemDrop fuelItem,
         ZNetView networkView,
-        IReadOnlyList<Inventory> inventories)
+        IReadOnlyList<Inventory> inventories, ChestScanner scanner, Player player)
     {
         if (fuelItem == null)
         {
@@ -263,6 +267,8 @@ public sealed class StationAutomationModule : IFeatureModule
         string fuelName = fuelItem.m_itemData.m_shared.m_name;
         foreach (Inventory inventory in inventories)
         {
+            if (inventory.GetItem(fuelName) == null || !scanner.TryPrepareInventory(inventory, player) ||
+                !networkView.IsOwner()) continue;
             ItemDrop.ItemData item = inventory.GetItem(fuelName);
             if (item != null && inventory.RemoveOneItem(item))
             {
@@ -288,7 +294,7 @@ public sealed class StationAutomationModule : IFeatureModule
 
     private sealed class StationState
     {
-        public ChestScanner Scanner { get; } = new ChestScanner();
+        public ChestScanner Scanner { get; } = new ChestScanner(includeRemote: true);
 
         public float NextCheckAt { get; set; }
     }

@@ -7031,8 +7031,7 @@
         if (!timelapseRestoreVisibility || !timelapseIsActive()) {
             return;
         }
-        timelapseRestoreVisibility.fog = Boolean(fogAvailable &&
-            layerSettings.fog);
+        timelapseRestoreVisibility.fog = Boolean(fogLayerIsEnabled());
         timelapseRestoreVisibility.heatmap = Boolean(timelapseHasAccess() &&
             layerSettings.heatmap && heatmapLayer);
         timelapseRestoreVisibility.bases = Boolean(
@@ -10041,7 +10040,7 @@
             : ["fog"];
         var overlaysBody = appendLayerSection("overlays", "Overlays", overlayFeeds);
         appendMapStyleControl(overlaysBody);
-        if (fogAvailable) {
+        if (fogAvailable && !fogStatus.hide) {
             appendLayerRow(overlaysBody, "fog", "Fog", "≈", "fog", { counted: false });
         }
         if (hasLiveAccess()) {
@@ -10618,7 +10617,7 @@
 
     function feedStaleness(feed) {
         if (feed === "fog") {
-            if (!fogAvailable || !layerSettings.fog) {
+            if (!fogLayerIsEnabled()) {
                 return { state: "grey", title: "fog off" };
             }
             if (fogOverlay && fogDisplayedRevision !== null && map && map.hasLayer(fogOverlay)) {
@@ -11154,7 +11153,7 @@
                 );
             }
         });
-        if (fogAvailable && layerSettings.fog) {
+        if (fogLayerIsEnabled()) {
             appendLegendItem("≈", "Fog", "fog");
         }
         if (entityLayersAreAvailable()) {
@@ -11289,7 +11288,7 @@
         });
         setLayerVisible(
             fogOverlay,
-            !historicalLayersVisible && fogAvailable && layerSettings.fog
+            !historicalLayersVisible && fogLayerIsEnabled()
         );
         var heatmapVisible = heatmapIsEnabled();
         setLayerVisible(heatmapLayer, heatmapVisible);
@@ -16820,7 +16819,12 @@
         tryBootCinemaFromHash();
     }
 
+    function fogLayerIsEnabled() {
+        return fogAvailable && (fogStatus.hide || layerSettings.fog);
+    }
+
     function updateFogStatus(status) {
+        var wasLocked = fogStatus.hide;
         var mode = status && typeof status.mode === "string" ? status.mode.toLowerCase() : "off";
         var revisionNumber = status ? Number(status.revision) : 0;
         var sizeNumber = status ? Number(status.size) : 0;
@@ -16833,7 +16837,14 @@
 
         var wasAvailable = fogAvailable;
         fogAvailable = fogStatus.mode !== "off" && !hasLiveAccess();
-        if (wasAvailable !== fogAvailable) {
+        if (fogStatus.hide && fogAvailable) {
+            window.clearTimeout(fogCoverTimer);
+            fogCoverTimer = 0;
+        } else if (wasLocked && fogCoverElement) {
+            window.clearTimeout(fogCoverTimer);
+            fogCoverTimer = window.setTimeout(hideFogCover, 8000);
+        }
+        if (wasAvailable !== fogAvailable || wasLocked !== fogStatus.hide) {
             renderLayerRows();
         }
         applyFogStatus();
@@ -16905,8 +16916,11 @@
         cover.className = "map-cover";
         elements.mapPane.appendChild(cover);
         fogCoverElement = cover;
-        // Never brick the map if fog.png cannot load: reveal after a grace period.
-        fogCoverTimer = window.setTimeout(hideFogCover, 8000);
+        // A required cover stays in place until fog loads; a network failure must
+        // not silently reveal the map through its normal controls.
+        if (!fogStatus.hide) {
+            fogCoverTimer = window.setTimeout(hideFogCover, 8000);
+        }
     }
 
     function hideFogCover() {
@@ -16994,6 +17008,10 @@
             return;
         }
 
+        if (fogStatus.hide && (!fogDisplayedRevision || fogDisplayedRevision.indexOf("|solid|") < 0)) {
+            window.clearTimeout(fogCoverTimer);
+            showFogCover();
+        }
         fogRequestedRevision = cacheKey;
         var loadSequence = ++fogLoadSequence;
         var image = new window.Image();
@@ -17009,6 +17027,7 @@
             feedLastUpdated.fog = Date.now();
             syncMinimapFog(url);
             syncLayerVisibility();
+            hideFogCover();
         };
         image.onerror = function () {
             if (loadSequence === fogLoadSequence && fogRequestedRevision === cacheKey) {

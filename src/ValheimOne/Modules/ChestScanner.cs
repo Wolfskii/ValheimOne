@@ -35,6 +35,12 @@ internal sealed class ChestScanner
         return null;
     }
 
+    public bool TryPrepareInventory(Inventory inventory, Player player)
+    {
+        Container? container = FindContainer(inventory);
+        return container != null && ChestOwnership.Prepare(container, player) == ChestOwnership.Result.Ready;
+    }
+
     private Player? _cachedPlayer;
     private Vector3 _cachedCenter;
     private float _cachedRange;
@@ -136,8 +142,8 @@ internal sealed class ChestScanner
                 continue;
             }
 
-            // Remote copies are for crafting previews only. Mutation requires an acknowledged
-            // ownership handoff and a freshly loaded inventory. Automation keeps owned-only scans.
+            // Remote copies can be inspected, but mutation requires an acknowledged
+            // ownership handoff and a freshly loaded inventory.
             if (container.m_checkGuardStone &&
                 !ignoreWardedChests &&
                 !PrivateArea.CheckAccess(

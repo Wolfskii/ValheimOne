@@ -44,7 +44,7 @@ Turn on the heatmap to see where everyone has been over the last day or week, op
 
 ### 🔗 Share It With Your Players
 
-Three views, and you decide who gets which. **Admin** sees everything. **Shared** shows live players and every layer but never grants a single admin action. **Public** is read-only, with its own fog and public-layer settings. Check the tokenless link before sharing it. With `FogMode = trails` or `explored`, enable `FogHideUnexplored = true` for an opaque cover and to withhold unexplored region names, spawn and trader markers. The default fog is a translucent tint; Admin and Shared views still show the full terrain.
+Three views, and you decide who gets which. **Admin** sees everything. **Shared** shows live players and every layer but never grants a single admin action. **Public** is read-only, with its own fog and public-layer settings. Check the tokenless link before sharing it. With `FogMode = trails` or `explored`, enable `FogHideUnexplored = true` for an opaque cover and to withhold unexplored region names, spawn and trader markers. Public viewers cannot turn that cover off through the map controls. The default fog is a translucent tint; Admin and Shared views still show the full terrain. Fog controls the displayed map, not access to the underlying terrain tiles.
 
 ![ValheimOne public map with explored fog](docs/screenshots/livemap-public-fog.png)
 
