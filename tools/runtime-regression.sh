@@ -6,7 +6,8 @@ server="$modding/testserver"
 [[ -x "$server/valheim_server.x86_64" ]] || { echo 'Native Linux testserver is required.' >&2; exit 1; }
 exec 9>"$server/.runtime-regression.lock"
 flock -n 9 || { echo 'Runtime regression already running.' >&2; exit 1; }
-dotnet build "$repo/tools/RuntimeRegression/RuntimeRegression.csproj" -c Release
+# Compiler servers can outlive this script; they must not inherit the test lock.
+dotnet build "$repo/tools/RuntimeRegression/RuntimeRegression.csproj" -c Release 9>&-
 backup=$(mktemp -d)
 plugins="$server/BepInEx/plugins"
 config="$server/BepInEx/config"
@@ -83,7 +84,7 @@ CONSOLE_PROBE_URL=http://127.0.0.1:24583 CONSOLE_PROBE_RESULT="$console_result" 
     exec "$@"
 ' regression-doorstop "$server/valheim_server.x86_64" -name regression -port 24580 \
     -world SmokeWorld -password regression1 -savedir "$backup/worlds" -nographics -batchmode -public 0 \
-    > "$output/server.log" 2>&1 &
+    > "$output/server.log" 2>&1 9>&- &
 pid=$!
 deadline=$((SECONDS + 240))
 while (( SECONDS < deadline )); do
