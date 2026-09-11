@@ -31,3 +31,7 @@ Thumbs.db
 tools/cache/
 !tools/release/valheimone.cfg
 tools/contract-fingerprint.txt
+
+# Native seed worker runtime
+tools/SeedMap/data/
+tools/SeedMap/**/__pycache__/
