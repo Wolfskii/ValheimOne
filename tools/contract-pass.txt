@@ -1,4 +1,4 @@
-version=0.13.8
-golden-sha256=e314190a809c99a11324e764b2c4a427486d71c0310a7bd3f3802e85de1b11fe
-commit=6d79d6a
-recorded=2026-09-11T14:55:34Z
+version=0.13.9
+golden-sha256=e38a2ea17add186cca39faaeeed45ba77587a510cf0ee0050fc6987a4c9d4ffe
+commit=d5b0dc6
+recorded=2026-09-11T23:00:30Z
