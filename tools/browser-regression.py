@@ -31,6 +31,9 @@ with sync_playwright() as pw:
             assert page.locator('input[data-layer-key="fog"]').count() == 0, 'Required fog must have no disable control'
             assert page.locator('.fog-overlay').is_visible(), 'Saved fog=false must not disable required fog'
             assert page.locator('.map-cover:not(.is-hidden)').count() == 0, 'Loaded fog must release the loading cover'
+            pins = page.request.get(base + '/api/webpins').json()
+            assert pins['sharedEditing'] is True, 'Fixture must expose public pins with shared editing enabled'
+            assert not page.get_by_role('button', name='Drop a web pin', exact=True).is_visible(), 'Public visitors must not see a pin creation control'
             assert page.evaluate('document.documentElement.scrollWidth <= innerWidth + 1'), 'Page must fit its viewport'
             page.screenshot(path=str(out / f'public-locked-{width}.png'))
             # Only the change notification is simulated below; initial HTML,
@@ -61,6 +64,33 @@ with sync_playwright() as pw:
         assert page.locator('.map-cover:not(.is-hidden)').is_visible(), 'Failed required fog must remain covered after eight seconds'
         page.screenshot(path=str(out / 'required-fog-network-failure.png'))
         results.append({'injected_fog_network_failure': 'pass'})
+        context.close()
+
+        context = browser.new_context(viewport={'width': 1280, 'height': 900})
+        page = context.new_page()
+        shared = base + '/?token=browser-regression-shared'
+        page.goto(shared, wait_until='domcontentloaded')
+        page.get_by_role('button', name='Drop a web pin', exact=True).wait_for(state='visible', timeout=30000)
+        assert page.locator('input[data-layer-key="fog"]').count() == 0, 'Shared view remains unfogged'
+        headers = {'X-LiveMap-Token': 'browser-regression-shared', 'X-Operator': 'BrowserRegression'}
+        created = page.request.post(base + '/api/webpins', headers=headers,
+            data={'author': 'BrowserRegression', 'icon': 'pin', 'label': 'Temporary browser check', 'x': 0, 'z': 0})
+        assert created.ok, created.text()
+        pins = page.request.get(base + '/api/webpins', headers=headers).json()['pins']
+        pin = next(x for x in pins if x.get('author') == 'BrowserRegression' and x.get('label') == 'Temporary browser check')
+        try:
+            denied = page.request.post(base + '/api/webpins', data={'icon': 'pin', 'label': 'public write must fail', 'x': 0, 'z': 0})
+            assert denied.status == 403, 'Native server must reject public pin writes'
+            changed = page.request.patch(base + '/api/webpins/' + pin['id'], headers=headers,
+                data={'icon': 'pin', 'label': 'Edited browser check'})
+            assert changed.ok, changed.text()
+            page.screenshot(path=str(out / 'shared-pin-controls.png'))
+        finally:
+            deleted = page.request.delete(base + '/api/webpins/' + pin['id'], headers=headers)
+            assert deleted.ok, deleted.text()
+        pins = page.request.get(base + '/api/webpins', headers=headers).json()['pins']
+        assert not any(x['id'] == pin['id'] for x in pins), 'Test pin must be removed'
+        results.append({'native_shared_pin_create_edit_delete': 'pass', 'native_public_pin_rejection': 'pass'})
         context.close()
     finally:
         browser.close()

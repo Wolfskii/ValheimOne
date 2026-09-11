@@ -4116,7 +4116,7 @@
 
     function canCreateWebPin() {
         return webPinsAvailable &&
-            (currentView === "admin" || webPinsSharedEditing);
+            (currentView === "admin" || (currentView === "shared" && webPinsSharedEditing));
     }
 
     function canEditWebPin(pin) {

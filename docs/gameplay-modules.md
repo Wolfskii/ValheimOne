@@ -38,7 +38,7 @@ For **Shared Exploration on Valheim 1.0**, update the server and all participati
 
 For **Craft From Chest on 0.13.6+**, nearby chests can be used even when another player last opened them. Crafting may briefly wait for the chest's current owner to hand over its inventory; hammer placement may ask you to click again once the chest is ready.
 
-For **station and cooking automation on Valheim 1.0**, update the server and participating PCs to **0.13.7 or newer**. Enable the relevant module's `Enabled` switch as well as its individual automation options. Automation waits for access to a chest owned by another player before taking fuel or ingredients. Keep every participating PC current; older clients can still run the old station behavior.
+For **station and cooking automation on Valheim 1.0**, update the server and participating PCs to **0.13.8 or newer**. Enable the relevant module's `Enabled` switch as well as its individual automation options. Automation waits for access to a chest owned by another player before taking fuel or ingredients. Keep every participating PC current; older clients can still run the old station behavior.
 
 Open or otherwise busy chests are excluded, and private-chest and ward restrictions still apply. Update the server and all participating PCs; station automation retains its separate existing ownership rules.
 

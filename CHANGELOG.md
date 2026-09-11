@@ -4,7 +4,7 @@ All notable changes to ValheimOne will be documented in this file. This project 
 
 ## [Unreleased]
 
-## [0.13.7] - 2026-09-11
+## [0.13.8] - 2026-09-11
 
 ### Fixed
 
@@ -12,10 +12,11 @@ All notable changes to ValheimOne will be documented in this file. This project 
 - Station automation sends the complete Valheim 1.0 ore and cooking RPC payload, including the source item's cheated flag, so consumed inputs reach the station instead of being lost. Unknown future RPC shapes refuse consumption. Legacy station payloads remain supported.
 - Station and cooking automation can request an accessible chest from another nearby player. They wait for the current owner's grant and inventory revision, then select the item again before consumption. Busy chests, privacy and wards retain their existing checks.
 - Public maps with `FogHideUnexplored = true` no longer offer a Fog toggle. Required fog overrides an older browser preference and keeps its loading cover if the fog image cannot load. This controls the normal map view; raw terrain tiles are not an access-controlled secret.
+- Read-only Public maps no longer offer web-pin creation when Shared Pin Editing is enabled. Admin and permitted Shared visitors retain their editing controls.
 
 ### Upgrade
 
-- Verified against Valheim 1.0.12. Update the server and every participating PC to 0.13.7 for station automation. Keep the existing configuration; no new keys are required.
+- Verified against Valheim 1.0.12. Update the server and every participating PC to 0.13.8 for station automation. Keep the existing configuration; no new keys are required. The 0.13.7 verification candidate was not published.
 
 ## [0.13.6] - 2026-09-10
 

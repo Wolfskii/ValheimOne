@@ -69,6 +69,8 @@ cfg['LiveMap'].update({'Enabled':'true', 'ConsoleEnabled':'true', 'BindIp':'127.
     'PublicView':'false', 'StatusPublic':'false'})
 if int(os.environ['VALHEIMONE_BROWSER_HOLD_SECONDS']) > 0:
     cfg['LiveMap'].update({'PublicView':'true', 'FogMode':'trails', 'FogHideUnexplored':'true',
+        'PublicWebPins':'true', 'SharedPinEditing':'true',
+        'ShareToken':'browser-regression-shared',
         'BindIp':os.environ.get('VALHEIMONE_BROWSER_BIND', '127.0.0.1')})
 with open(sys.argv[2], 'w') as out: cfg.write(out)
 PY
