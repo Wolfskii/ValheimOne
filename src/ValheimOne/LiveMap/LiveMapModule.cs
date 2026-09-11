@@ -252,6 +252,7 @@ public sealed class LiveMapModule : IFeatureModule
 
     public void ApplyPatches(Harmony harmony)
     {
+        GameCompat.ApplyHeadlessSaveCompatibility(harmony);
         VoCommands.ApplyPatches(harmony);
         MapPingPatch.ApplyPatches(
             harmony,

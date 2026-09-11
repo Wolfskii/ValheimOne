@@ -11,6 +11,9 @@ backup=$(mktemp -d)
 plugins="$server/BepInEx/plugins"
 config="$server/BepInEx/config"
 output="$repo/artifacts/runtime-regression"
+console_result="$backup/console-result.txt"
+export CONSOLE_PROBE_TOKEN
+CONSOLE_PROBE_TOKEN=$(python3 -c 'import secrets; print(secrets.token_hex(32))')
 mkdir -p "$plugins" "$config" "$output" "$backup/worlds/worlds_local"
 pid=
 cleanup() {
@@ -47,19 +50,23 @@ if [[ -n ${VALHEIMONE_PLUGIN_ZIP:-} ]]; then
 fi
 cp "$repo/tools/RuntimeRegression/bin/Release/net472/ValheimOne.RuntimeRegression.dll" "$plugins/"
 python3 - "$repo/tools/release/valheimone.cfg" "$config/valheimone.cfg" <<'PY'
-import configparser, sys
+import configparser, os, sys
 cfg=configparser.ConfigParser(interpolation=None, strict=False)
 cfg.optionxform=str
 cfg.read(sys.argv[1])
 cfg['CraftFromChest']['Enabled']='true'
 cfg['MapSharing']['Enabled']='true'
 cfg['MapSharing']['SharedExploration']='true'
+cfg['LiveMap'].update({'Enabled':'true', 'ConsoleEnabled':'true', 'BindIp':'127.0.0.1',
+    'Port':'24583', 'TextureSize':'512', 'AccessToken':os.environ['CONSOLE_PROBE_TOKEN'],
+    'PublicView':'false', 'StatusPublic':'false'})
 with open(sys.argv[2], 'w') as out: cfg.write(out)
 PY
 cp "$repo/tools/fixtures/SmokeWorld.fwl" "$repo/tools/fixtures/SmokeWorld.db" "$backup/worlds/worlds_local/"
 cd "$server"
 rm -f "$server/BepInEx/LogOutput.log"
-VALHEIMONE_RUNTIME_REGRESSION=1 SteamAppId=892970 setsid bash -c '
+VALHEIMONE_RUNTIME_REGRESSION=1 VALHEIMONE_CONSOLE_PROBE=1 CONSOLE_PROBE_SETTLE_SECONDS=0 \
+CONSOLE_PROBE_URL=http://127.0.0.1:24583 CONSOLE_PROBE_RESULT="$console_result" SteamAppId=892970 setsid bash -c '
     export DOORSTOP_ENABLED=1
     export DOORSTOP_TARGET_ASSEMBLY=./BepInEx/core/BepInEx.Preloader.dll
     export LD_LIBRARY_PATH="./doorstop_libs:./linux64:${LD_LIBRARY_PATH:-}"
@@ -71,7 +78,7 @@ VALHEIMONE_RUNTIME_REGRESSION=1 SteamAppId=892970 setsid bash -c '
 pid=$!
 deadline=$((SECONDS + 240))
 while (( SECONDS < deadline )); do
-    [[ ! -f "$config/runtime-regression/result.txt" ]] || break
+    if [[ -f "$config/runtime-regression/result.txt" && -f "$console_result" ]]; then break; fi
     if [[ -f "$server/BepInEx/LogOutput.log" ]] &&
         grep -qE 'Failed to patch|Feature patch application failed' "$server/BepInEx/LogOutput.log"; then break; fi
     kill -0 "$pid" 2>/dev/null || break
@@ -85,6 +92,14 @@ if [[ -f "$config/runtime-regression/result.txt" ]]; then
 else
     echo 'Runtime regression did not complete.' >&2
     tail -n 50 "$output/server.log" >&2
+fi
+if [[ -f "$console_result" ]]; then
+    cp "$console_result" "$output/console-result.txt"
+    cat "$output/console-result.txt"
+    grep -q '^CONSOLE PROBE PASS$' "$output/console-result.txt" || status=1
+else
+    echo 'HTTP console save probe did not complete.' >&2
+    status=1
 fi
 cleanup
 trap - EXIT

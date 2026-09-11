@@ -4,6 +4,10 @@ All notable changes to ValheimOne will be documented in this file. This project 
 
 ## [Unreleased]
 
+### Fixed
+
+- On Valheim 1.0 dedicated servers, saving during the first 60 seconds after startup or another save no longer throws in the game's Nintendo-specific save-rate check when no distribution platform exists. Player-platform rate checks and the normal save, access and disk-space checks are unchanged.
+
 ## [0.13.6] - 2026-09-10
 
 ### Fixed

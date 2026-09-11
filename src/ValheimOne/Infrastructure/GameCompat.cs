@@ -3,6 +3,7 @@ using System.Collections;
 using System.Collections.Generic;
 using System.Reflection;
 using HarmonyLib;
+using Splatform;
 using UnityEngine;
 
 namespace ValheimOne.Infrastructure;
@@ -19,6 +20,30 @@ internal static class GameCompat
 {
     private const BindingFlags AnyInstance =
         BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance;
+
+    public static void ApplyHeadlessSaveCompatibility(Harmony harmony)
+    {
+        // This Nintendo-specific rate check was added in 1.0. Older builds have
+        // no such method and need no patch.
+        MethodInfo? method = AccessTools.Method(typeof(ZNet), "HardSaveBlock", Type.EmptyTypes);
+        if (method != null)
+        {
+            harmony.Patch(method, prefix: new HarmonyMethod(typeof(GameCompat), nameof(HardSaveBlockPrefix)));
+        }
+    }
+
+    private static bool HardSaveBlockPrefix(ZNet __instance, ref bool __result)
+    {
+        // A dedicated server has no distribution-platform object. Within 60s of
+        // the last save, vanilla dereferences it to test for Nintendo and throws
+        // before saving. Preserve the original rate check on player platforms.
+        if (__instance.IsDedicated() && PlatformManager.DistributionPlatform == null)
+        {
+            __result = false;
+            return false;
+        }
+        return true;
+    }
 
     private static readonly Lazy<FieldInfo?> ExploredMapField = new(
         () => TryResolve(() => AccessTools.Field(typeof(Minimap), "m_explored")));

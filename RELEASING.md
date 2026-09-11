@@ -74,6 +74,8 @@ tools/runtime-regression.sh
 
 This enables Shared Exploration and Craft From Chest and uses actual game minimaps, containers and inventory serialization. It checks both exploration storage formats, two map contributions, fog updates, periodic persistence/reload, chest access restrictions and exact resource deduction. A controlled two-replica transport exercises grants arriving before ownership/data and rejects stale or spoofed grants. Craft/build guards must prevent output while a transfer is pending. This is a runtime component and protocol test, not a pair of retail clients joining over Steam/PlayFab.
 
+The runner also enables the loopback web console with a generated test token and executes `save`, `vo save`, a read-only command, and consecutive saves. It requires successful HTTP responses AND fresh native `World save (5/5) done` events; an accepted request alone is not completion proof. The console observer records full native exception stacks for startup timing investigations and can also run alongside older released DLLs.
+
 The runner restores the testserver's previous plugin/config files and stops its own game process. Results and logs are under `artifacts/runtime-regression/`. `VALHEIM_MODDING_DIR` selects a separate harness root. Do not run it against an occupied or customer server. CI repeats it from the packaged DLL before creating the release draft.
 
 ## 5. Package
