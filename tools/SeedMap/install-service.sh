@@ -47,3 +47,9 @@ UNIT
 systemctl --user daemon-reload
 systemctl --user enable --now valheim-seed-map.service
 systemctl --user is-active valheim-seed-map.service
+for attempt in {1..15}; do
+  if curl --fail --silent --max-time 3 "http://127.0.0.1:$port/catalog"; then exit 0; fi
+  sleep 1
+done
+echo 'Map API health check failed' >&2
+exit 1

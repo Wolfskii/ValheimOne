@@ -173,6 +173,10 @@ def generate(seed, size=1024):
 
 
 if __name__ == '__main__':
+    # A supervisor timeout must unwind the native process cleanup, not orphan it.
+    def terminate(signum, frame):
+        raise SystemExit(1)
+    signal.signal(signal.SIGTERM, terminate)
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('seed')
     parser.add_argument('--size', type=int, default=1024)

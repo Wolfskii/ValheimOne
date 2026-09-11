@@ -19,9 +19,19 @@ guard = threading.Lock()
 
 def generate(seed, key):
     try:
-        result = subprocess.run([sys.executable, str(Path(__file__).with_name('worker.py')), seed],
-                                capture_output=True, timeout=400)
-        if result.returncode:
+        child = subprocess.Popen([sys.executable, str(Path(__file__).with_name('worker.py')), seed],
+                                 stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        try:
+            child.wait(timeout=400)
+        except subprocess.TimeoutExpired:
+            child.terminate()
+            try:
+                child.wait(timeout=25)
+            except subprocess.TimeoutExpired:
+                child.kill()
+                child.wait(timeout=5)
+            raise RuntimeError('Generation timed out')
+        if child.returncode:
             raise RuntimeError('Generation failed')
         with guard:
             jobs[key] = 'complete'
