@@ -30,10 +30,7 @@ log_dir="${modding_dir}/harness/logs"
 server_bin="${testserver}/valheim_server.x86_64"
 plugin_dir="${testserver}/BepInEx/plugins"
 bepinex_log="${testserver}/BepInEx/LogOutput.log"
-world_dir="${testserver}/worlds/worlds_local"
 world_name=SmokeWorld
-world_fwl="${world_dir}/${world_name}.fwl"
-world_db="${world_dir}/${world_name}.db"
 fixture_fwl="${repo_root}/tools/fixtures/${world_name}.fwl"
 fixture_db="${repo_root}/tools/fixtures/${world_name}.db"
 reference_cfg="${repo_root}/tools/release/valheimone.cfg"
@@ -66,10 +63,6 @@ baseline_allowlist=(
     printf 'Missing pinned world fixture: %s\n' "$fixture_db" >&2
     exit 1
 }
-[[ -d $world_dir ]] || {
-    printf 'Missing testserver world directory: %s\n' "$world_dir" >&2
-    exit 1
-}
 [[ -f $reference_cfg ]] || {
     printf 'Missing pristine reference config: %s\n' "$reference_cfg" >&2
     exit 1
@@ -79,18 +72,22 @@ baseline_allowlist=(
     exit 1
 }
 
-"${repo_root}/build.sh"
+exec 9>"$testserver/.runtime-regression.lock"
+flock -n 9 || { echo 'Another native test is using this testserver.' >&2; exit 1; }
+"${repo_root}/build.sh" 9>&-
 mkdir -p -- "$plugin_dir"
 cp -f -- "$output_dll" "${plugin_dir}/ValheimOne.dll"
 
 backup_dir=$(mktemp -d "${TMPDIR:-/tmp}/valheimone-contract.XXXXXX")
-backup_fwl="${backup_dir}/${world_name}.fwl"
-backup_db="${backup_dir}/${world_name}.db"
 backup_cfg="${backup_dir}/valheimone.cfg"
-had_fwl=0
-had_db=0
+# Valheim 1.0 migrates .fwl/.db into a same-named directory. Reusing the
+# savedir lets that newer tree override the pinned fixture on a later run.
+run_savedir="${backup_dir}/worlds"
+world_dir="${run_savedir}/worlds_local"
+world_fwl="${world_dir}/${world_name}.fwl"
+world_db="${world_dir}/${world_name}.db"
+mkdir -p -- "$world_dir"
 had_cfg=0
-world_replaced=0
 cfg_replaced=0
 server_pid=
 server_pgid=
@@ -234,24 +231,12 @@ classify_bepinex_errors() {
 cleanup() {
     local status=$?
     local restore_status=0
-    local server_pattern=${server_bin//./\\.}
     set +e
     trap - EXIT INT TERM
 
     stop_server
     if [[ -n $server_pid ]]; then
-        pkill -f -- "^${server_pattern}([[:space:]]|$)" 2>/dev/null || true
         wait "$server_pid" 2>/dev/null || true
-    fi
-
-    if (( world_replaced )); then
-        rm -f -- "$world_fwl" "$world_db"
-        if (( had_fwl )); then
-            cp -a -- "$backup_fwl" "$world_fwl" || restore_status=1
-        fi
-        if (( had_db )); then
-            cp -a -- "$backup_db" "$world_db" || restore_status=1
-        fi
     fi
 
     if (( cfg_replaced )); then
@@ -261,11 +246,12 @@ cleanup() {
         fi
     fi
 
-    rm -f -- "$backup_fwl" "$backup_db" "$backup_cfg"
+    rm -rf -- "$run_savedir"
+    rm -f -- "$backup_cfg"
     rmdir -- "$backup_dir" 2>/dev/null || true
 
     if (( restore_status )); then
-        printf 'ERROR: failed to restore the original SmokeWorld or valheimone.cfg files.\n' >&2
+        printf 'ERROR: failed to restore the original valheimone.cfg file.\n' >&2
         status=1
     fi
     exit "$status"
@@ -275,15 +261,6 @@ trap cleanup EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
 
-if [[ -e $world_fwl ]]; then
-    cp -a -- "$world_fwl" "$backup_fwl"
-    had_fwl=1
-fi
-if [[ -e $world_db ]]; then
-    cp -a -- "$world_db" "$backup_db"
-    had_db=1
-fi
-world_replaced=1
 cp -a -- "$fixture_fwl" "$world_fwl"
 cp -a -- "$fixture_db" "$world_db"
 
@@ -318,7 +295,7 @@ server_args=(
     -port 24560
     -world "$world_name"
     -password "smokepass1"
-    -savedir "${testserver}/worlds"
+    -savedir "$run_savedir"
     -nographics
     -batchmode
     -public 0
@@ -331,7 +308,7 @@ VALHEIMONE_CONTRACT=1 setsid bash -c '
     export LD_PRELOAD="libdoorstop_x64.so:${LD_PRELOAD:-}"
     exec "$@"
 ' harness-doorstop "$server_bin" "${server_args[@]}" \
-    > >(tee -a "$server_log") 2>&1 &
+    > >(tee -a "$server_log") 2>&1 9>&- &
 server_pid=$!
 
 shell_pgid=$(ps -o pgid= -p "$$" 2>/dev/null | tr -d '[:space:]' || true)
