@@ -3,6 +3,7 @@ using System.Collections;
 using System.Collections.Generic;
 using System.IO;
 using System.Reflection;
+using System.Runtime.Serialization;
 using BepInEx;
 using HarmonyLib;
 using UnityEngine;
@@ -57,6 +58,7 @@ public sealed class RuntimeRegression : BaseUnityPlugin
         Player? previous = Player.m_localPlayer;
         try
         {
+            TestCrossplayLobbyCollision();
             TestBitmapStorage();
             TestMapExchange();
             TestChestTransfer();
@@ -114,6 +116,108 @@ public sealed class RuntimeRegression : BaseUnityPlugin
         if (!condition) throw new InvalidOperationException(name);
         _assertions++;
         Logger.LogInfo("REGRESSION " + name);
+    }
+
+    private static ZPlayFabMatchmaking? _lobbyFixture;
+    private static int _regenerated;
+    private static int _activated;
+
+    private static bool CaptureRegeneration(ZPlayFabMatchmaking __instance)
+    {
+        if (!ReferenceEquals(__instance, _lobbyFixture)) return true;
+        _regenerated++;
+        return false;
+    }
+
+    private static bool CaptureActivation(ZPlayFabMatchmaking __instance)
+    {
+        if (!ReferenceEquals(__instance, _lobbyFixture)) return true;
+        _activated++;
+        return false;
+    }
+
+    private static object? ReadMember(object instance, string name) =>
+        AccessTools.Field(instance.GetType(), name)?.GetValue(instance) ??
+        AccessTools.Property(instance.GetType(), name)?.GetValue(instance);
+
+    private static void WriteMember(object instance, string name, object? value)
+    {
+        FieldInfo? field = AccessTools.Field(instance.GetType(), name);
+        if (field != null) field.SetValue(instance, value);
+        else AccessTools.Property(instance.GetType(), name).SetValue(instance, value);
+    }
+
+    private void TestCrossplayLobbyCollision()
+    {
+        MethodInfo callback = AccessTools.Method(typeof(ZPlayFabMatchmaking), "OnCheckJoinCodeSuccess");
+        MethodInfo prefix = AccessTools.Method(typeof(CrossplayLobbyCompatibility), "CheckJoinCodePrefix");
+        var pluginHarmony = new Harmony(ValheimOnePlugin.PluginGuid);
+        _lobbyFixture = (ZPlayFabMatchmaking)FormatterServices.GetUninitializedObject(typeof(ZPlayFabMatchmaking));
+        FieldInfo serverDataField = AccessTools.Field(typeof(ZPlayFabMatchmaking), "m_serverData");
+        object serverData = Activator.CreateInstance(serverDataField.FieldType, true);
+        WriteMember(serverData, "serverName", "Regression lobby");
+        serverDataField.SetValue(_lobbyFixture, serverData);
+        object result = Activator.CreateInstance(callback.GetParameters()[0].ParameterType);
+        PropertyInfo? listProperty = AccessTools.Property(result.GetType(), "Lobbies");
+        Type listType = listProperty?.PropertyType ?? AccessTools.Field(result.GetType(), "Lobbies").FieldType;
+        var lobbies = (IList)Activator.CreateInstance(listType);
+        Type lobbyType = listType.GetGenericArguments()[0];
+        object ownerless = Activator.CreateInstance(lobbyType);
+        lobbies.Add(ownerless);
+        WriteMember(result, "Lobbies", lobbies);
+
+        // Reproduce the exact vanilla callback failure before the guard is installed.
+        pluginHarmony.Unpatch(callback, prefix);
+        bool reproduced = false;
+        try { callback.Invoke(_lobbyFixture, new[] { result }); }
+        catch (TargetInvocationException exception) { reproduced = exception.InnerException is NullReferenceException; }
+        finally { CrossplayLobbyCompatibility.Apply(pluginHarmony); }
+        Check(reproduced, "vanilla join-code callback throws for one ownerless lobby");
+
+        _harmony!.Patch(AccessTools.Method(typeof(ZPlayFabMatchmaking), "RegenerateLobbyJoinCode"),
+            prefix: new HarmonyMethod(typeof(RuntimeRegression), nameof(CaptureRegeneration)));
+        _harmony.Patch(AccessTools.Method(typeof(ZPlayFabMatchmaking), "ActivateSession"),
+            prefix: new HarmonyMethod(typeof(RuntimeRegression), nameof(CaptureActivation)));
+        _regenerated = _activated = 0;
+        callback.Invoke(_lobbyFixture, new[] { result });
+        Check(_regenerated == 1 && _activated == 0, "ownerless lobby takes native join-code regeneration");
+        Check(ReadMember(_lobbyFixture, "m_state")!.ToString() == "RegenerateJoinCode", "native collision state transition retained");
+        Check(ReferenceEquals(ReadMember(result, "Lobbies"), lobbies) && lobbies.Count == 1 && ReadMember(ownerless, "Owner") == null,
+            "ownerless provider response remains unchanged");
+        lobbies.Add(Activator.CreateInstance(lobbyType));
+        callback.Invoke(_lobbyFixture, new[] { result });
+        Check(_regenerated == 2, "multiple lobby collisions retain native regeneration");
+        lobbies.Clear();
+        WriteMember(_lobbyFixture, "m_retries", 10);
+        callback.Invoke(_lobbyFixture, new[] { result });
+        Check((int)ReadMember(_lobbyFixture, "m_retries")! == 9 && (float)ReadMember(_lobbyFixture, "m_retryIn")! == 1f,
+            "empty lobby index retains native bounded retry");
+
+        object manager = AccessTools.Property(typeof(PlayFabManager), "instance").GetValue(null);
+        PropertyInfo entityProperty = AccessTools.Property(typeof(PlayFabManager), "Entity");
+        object? savedEntity = entityProperty.GetValue(manager);
+        try
+        {
+            object localEntity = Activator.CreateInstance(entityProperty.PropertyType);
+            WriteMember(localEntity, "Id", "regression-local");
+            WriteMember(localEntity, "Type", "title_player_account");
+            entityProperty.SetValue(manager, localEntity);
+            Type ownerType = AccessTools.Property(lobbyType, "Owner")?.PropertyType ?? AccessTools.Field(lobbyType, "Owner").FieldType;
+            object owner = Activator.CreateInstance(ownerType);
+            WriteMember(owner, "Id", "regression-local");
+            WriteMember(ownerless, "Owner", owner);
+            lobbies.Add(ownerless);
+            callback.Invoke(_lobbyFixture, new[] { result });
+            Check(_activated == 1 && _regenerated == 2, "unique own lobby still activates normally");
+            WriteMember(owner, "Id", "regression-other");
+            callback.Invoke(_lobbyFixture, new[] { result });
+            Check(_activated == 1 && _regenerated == 3, "foreign owned lobby retains native collision handling");
+        }
+        finally
+        {
+            entityProperty.SetValue(manager, savedEntity);
+            _lobbyFixture = null;
+        }
     }
 
     private void TestBitmapStorage()

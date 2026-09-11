@@ -4,6 +4,7 @@ using System.Reflection;
 using System.Reflection.Emit;
 using HarmonyLib;
 using ValheimOne.Configuration;
+using ValheimOne.Infrastructure;
 
 namespace ValheimOne.Modules;
 
@@ -99,6 +100,9 @@ public sealed class ServerHostModule : IFeatureModule
         harmony.Patch(
             passwordValid,
             prefix: new HarmonyMethod(typeof(ServerHostModule), nameof(IsPublicPasswordValidPrefix)));
+
+        // Compatibility applies even when the optional host overrides are disabled.
+        CrossplayLobbyCompatibility.Apply(harmony);
     }
 
     // ZNet.RPC_PeerInfo: `if (GetNrOfPlayers() >= 10)` — the 10 is the inlined
