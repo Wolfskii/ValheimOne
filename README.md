@@ -172,6 +172,8 @@ Bugs and feature requests go to [GitHub Issues](https://github.com/HumanGenome/V
 
 See [CONTRIBUTING.md](CONTRIBUTING.md).
 
+If ValheimOne helps your group, a GitHub star is appreciated.
+
 ---
 
 ## License
