@@ -4,6 +4,16 @@ All notable changes to ValheimOne will be documented in this file. This project 
 
 ## [Unreleased]
 
+## [0.13.12] - 2026-09-14
+
+### Fixed
+
+- Explored fog stays aligned with world coordinates at every map texture size. The live map, minimap and history view now use the fog mask's fixed world extent instead of stretching it across the rendered map. At 4096 pixels the old projection doubled revealed positions away from the center.
+
+### Upgrade
+
+- Update the server and reload the map page. Existing configuration, recorded exploration and cartography data are preserved; this fix does not require a client update. Verified against Valheim 1.0.12. The 0.13.11 verification candidate was not published.
+
 ## [0.13.10] - 2026-09-11
 
 ### Fixed
