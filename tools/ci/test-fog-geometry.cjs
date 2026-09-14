@@ -39,7 +39,7 @@ if(!sandbox.updateMinimapFogBounds)sandbox.updateMinimapFogBounds=()=>Object.ass
 const points=[{column:285,row:269},{column:128,row:159},{column:450,row:105}];
 const failures=[];
 function near(actual,expected,label){if(Math.abs(actual-expected)>.0001)failures.push(`${label}: ${actual} != ${expected}`);}
-for(const textureSize of [512,1024,2048,4096]) {
+for(const textureSize of [256,512,1024,2048,4096]) {
     sandbox.mapMetrics={textureSize,pixelSize:12,unitsPerPixel:256/textureSize};
     const extent=sandbox.fogWorldBounds(),nw=extent.getNorthWest(),se=extent.getSouthEast();
     sandbox.updateMinimapFogBounds();
@@ -67,4 +67,4 @@ for(const textureSize of [512,1024,2048,4096]) {
 }
 if(failures.length){console.error(failures.join('\n'));process.exit(1);}
 assert.match(source,/L\.imageOverlay\(url, fogWorldBounds\(\)/,'Live overlay must use the tested bounds');
-console.log('Fog geometry passed: live map, minimap and history at 512/1024/2048/4096, three off-center cells each.');
+console.log('Fog geometry passed: live map, minimap and history at 256/512/1024/2048/4096, three off-center cells each.');
