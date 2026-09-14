@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Release-safety regressions; no network or publishing calls."""
 
+import copy
 import hashlib
 import importlib.util
 from pathlib import Path
@@ -86,6 +87,63 @@ class ReleaseSafety(unittest.TestCase):
     def test_api_redirects_never_forward_credentials(self):
         with self.assertRaisesRegex(RuntimeError, "not forwarded"):
             sync.NoRedirect().redirect_request(None, None, 302, "", {}, "https://unrelated.example")
+
+    def download_status(self):
+        return {"data": {
+            "mod": {"name": "ValheimOne", "version": "0.13.10", "status": "published"},
+            "modFiles": [
+                {"fileId": 22082, "version": "0.13.10", "category": "MAIN", "primary": 1,
+                 "manager": 0, "requirementsAlert": 1, "scannedV2": "VERIFIED"},
+                {"fileId": 22083, "version": "0.13.10", "category": "MAIN", "primary": 0,
+                 "manager": 1, "requirementsAlert": 0, "scannedV2": "VERIFIED"},
+            ],
+        }}
+
+    def verify_downloads(self, response):
+        sync.verify_public_downloads(response, "0.13.10", {
+            "plugin": {"game_scoped_id": "22082"}, "full": {"game_scoped_id": "22083"},
+        })
+
+    def test_matching_archives_do_not_override_quarantine_or_pending_scan(self):
+        for status in ["QUARANTINED", "QUEUED", "WAITING_REPORT", "NOT_SCANNED",
+                       "REPORT_ERROR", "PARTIAL", "TOO_LARGE", "unknown", None]:
+            response = self.download_status()
+            response["data"]["modFiles"][1]["scannedV2"] = status
+            with self.subTest(status=status), self.assertRaises(ValueError):
+                self.verify_downloads(response)
+
+    def test_approved_scan_states_and_historical_quarantine_are_distinct(self):
+        for status in ["VERIFIED", "INTERNALLY_VERIFIED", "MANUALLY_VERIFIED"]:
+            response = self.download_status()
+            response["data"]["modFiles"][1]["scannedV2"] = status
+            historical = {**response["data"]["modFiles"][1], "fileId": 21190,
+                          "version": "0.13.2", "category": "OLD_VERSION", "scannedV2": "QUARANTINED"}
+            response["data"]["modFiles"].append(historical)
+            self.verify_downloads(response)
+
+    def test_page_version_and_each_download_control_must_agree(self):
+        for field, value in [("version", "0.13.2"), ("status", "hidden"), ("name", "Another mod")]:
+            response = self.download_status()
+            response["data"]["mod"][field] = value
+            with self.subTest(field=field), self.assertRaises(ValueError):
+                self.verify_downloads(response)
+        for field, value in [("version", "0.13.2"), ("category", "OLD_VERSION"),
+                             ("primary", 0), ("manager", 1), ("requirementsAlert", 0)]:
+            response = self.download_status()
+            response["data"]["modFiles"][0][field] = value
+            with self.subTest(field=field), self.assertRaises(ValueError):
+                self.verify_downloads(response)
+
+    def test_graphql_errors_missing_and_duplicate_file_records_fail_closed(self):
+        response = self.download_status()
+        missing = copy.deepcopy(response)
+        missing["data"]["modFiles"].pop()
+        duplicate = copy.deepcopy(response)
+        duplicate["data"]["modFiles"].append(duplicate["data"]["modFiles"][0])
+        for invalid in [{}, {"data": None}, {"errors": [{"message": "unavailable"}], **response},
+                        missing, duplicate]:
+            with self.subTest(invalid=invalid), self.assertRaises(ValueError):
+                self.verify_downloads(invalid)
 
 
 if __name__ == "__main__":

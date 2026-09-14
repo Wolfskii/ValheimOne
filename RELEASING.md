@@ -186,7 +186,7 @@ Publishing a stable release triggers synchronization. A manual recovery run supp
 
 Before calling a release complete:
 
-- Verify the workflow passed: both versions, Nexus's archive hash index, the primary download, the page version and the changelog agree with GitHub Latest.
+- Verify the workflow passed: both versions, Nexus's archive hash index, the primary download, the page version and the changelog agree with GitHub Latest. Page version and scan state come from the current GraphQL response; legacy v1 mod metadata can remain stale after a successful upload. Quarantined, pending or unknown scan states fail verification even when archive hashes match.
 - Open the public Files page and verify both download buttons are usable. API metadata and a successful upload do not prove virus-scan clearance. Download both files through the normal authorized flow and compare SHA-256 with the release manifest.
 - Confirm the plugin file still requires BepInEx and Full does not require installing the loader twice. The upload API's requirements-popup flag does not itself create a dependency.
 - Check that the description, install requirements, permissions and media still match the released product. Gameplay modules marked Synced require ValheimOne on each participating PC; the map and server tools do not.

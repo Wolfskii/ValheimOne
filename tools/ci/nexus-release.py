@@ -23,13 +23,15 @@ class NoRedirect(urllib.request.HTTPRedirectHandler):
         raise RuntimeError("Unexpected API redirect; credentials were not forwarded")
 
 
-def nexus(path):
+def nexus(path, payload=None):
     key = os.environ.get("NEXUSMODS_API_KEY", "")
     if not key:
         raise RuntimeError("NEXUSMODS_API_KEY is missing; configure the repository secret")
     request = urllib.request.Request(
         "https://api.nexusmods.com" + path,
-        headers={"apikey": key, "Accept": "application/json", "User-Agent": "ValheimOne-release-sync"},
+        data=json.dumps(payload).encode() if payload is not None else None,
+        headers={"apikey": key, "Accept": "application/json", "Content-Type": "application/json",
+                 "User-Agent": "ValheimOne-release-sync"},
     )
     try:
         with urllib.request.build_opener(NoRedirect).open(request, timeout=45) as response:
@@ -128,6 +130,52 @@ def verify_indexed_hash(folder, filename, current):
         raise ValueError("Nexus has not indexed the expected archive; do not upload a duplicate")
 
 
+def public_download_status(game_id):
+    # The legacy v1 mod metadata can lag behind the live page after a v3 upload.
+    # GraphQL is a read-only query for the page version and per-file scan status.
+    return nexus("/v2/graphql", {
+        "query": """query($mod:ID!,$game:ID!) {
+            mod(modId:$mod,gameId:$game) { name version status }
+            modFiles(modId:$mod,gameId:$game) {
+                fileId version category primary manager requirementsAlert scannedV2
+            }
+        }""",
+        "variables": {"mod": MOD_PAGE_ID, "game": str(game_id)},
+    })
+
+
+def verify_public_downloads(response, version, expected):
+    if set(expected) != {"plugin", "full"}:
+        raise ValueError("Both Nexus download versions must be present")
+    if response.get("errors"):
+        raise ValueError("Nexus page/scan query failed; download status is unverified")
+    data = response.get("data") or {}
+    mod = data.get("mod") or {}
+    if mod.get("name") != "ValheimOne" or mod.get("status") != "published":
+        raise ValueError("Nexus page is not the expected published mod")
+    if mod.get("version") != version:
+        raise ValueError("Nexus page version does not match GitHub Latest")
+    for kind, current in expected.items():
+        matches = [f for f in (data.get("modFiles") or [])
+                   if str(f.get("fileId")) == str(current["game_scoped_id"])]
+        if len(matches) != 1:
+            raise ValueError(f"Nexus {kind} download status is missing or ambiguous")
+        file = matches[0]
+        if file.get("version") != version or file.get("category") != "MAIN":
+            raise ValueError(f"Nexus {kind} download is not the expected active version")
+        # Legacy manager=1 disables mod-manager downloads; 0 enables them.
+        if (file.get("primary") != int(kind == "plugin")
+                or file.get("manager") != int(kind == "full")
+                or file.get("requirementsAlert") != int(kind == "plugin")):
+            raise ValueError(f"Nexus {kind} primary/download/requirements controls do not match")
+        status = file.get("scannedV2")
+        if status == "QUARANTINED":
+            raise ValueError(f"Nexus {kind} archive is quarantined; moderator review required. Do not reupload.")
+        if status not in ("VERIFIED", "INTERNALLY_VERIFIED", "MANUALLY_VERIFIED"):
+            raise ValueError(f"Nexus {kind} archive has not passed its scan; download remains unverified")
+        print(f"Nexus {kind}: scan cleared and download controls verified")
+
+
 def write_outputs(values):
     target = os.environ.get("GITHUB_OUTPUT")
     if not target:
@@ -165,12 +213,14 @@ def main():
         raise ValueError("Unexpected Nexus mod ID")
     files = select_files(nexus(f"/v3/mods/{mod_id}/files")["data"]["mod_files"])
     outputs = {"version": version, "mod_id": mod_id, "notes": release["body"]}
+    current_files = {}
     for kind, filename in zip(["plugin", "full"], names):
         versions = nexus(f"/v3/mod-files/{files[kind]}/versions")["data"]["versions"]
         current = existing_version(versions, version)
         outputs[kind + "_id"] = files[kind]
         outputs[kind + "_upload"] = "false" if current else "true"
         if current:
+            current_files[kind] = current
             verify_indexed_hash(folder, filename, current)
             if bool(current.get("is_primary")) != (kind == "plugin"):
                 raise ValueError("Plugin-only must be the primary Nexus download")
@@ -178,14 +228,12 @@ def main():
             raise ValueError(f"Nexus {kind} version is missing")
         print(f"Nexus {kind}: {'present and hash-index verified' if current else 'upload required'}")
     if args.mode == "verify":
-        details = nexus(f"/v1/games/valheim/mods/{MOD_PAGE_ID}.json")
-        if details.get("version") != version:
-            raise ValueError("Nexus page version does not match GitHub Latest")
+        verify_public_downloads(public_download_status(mod["game_id"]), version, current_files)
         changelogs = nexus(f"/v1/games/valheim/mods/{MOD_PAGE_ID}/changelogs.json")
         if version not in changelogs:
             raise ValueError("Nexus release changelog is missing")
         print("Nexus versions, archive index, primary download, page version and changelog verified")
-        print("A metadata match is not scan clearance. Check both public download buttons for quarantine.")
+        print("Scan state verified. Check both public download buttons and download the archives normally.")
     write_outputs(outputs)
 
 
