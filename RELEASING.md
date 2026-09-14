@@ -84,6 +84,8 @@ Station checks enable automation and cooking, verify native RPC acceptance and e
 
 The runner restores the testserver's previous plugin/config files and stops its own game process. Results and logs are under `artifacts/runtime-regression/`. `VALHEIM_MODDING_DIR` selects a separate harness root. Do not run it against an occupied or customer server. CI repeats it from the packaged DLL before creating the release draft.
 
+Pass the disposable fixture's admin token as `VALHEIMONE_BROWSER_ADMIN_TOKEN` to also verify a real browser command submission and rejection of a Shared token. The check uses the native `banned` query and requires a successful POST response with output. Help commands are rendered locally in the browser, so a populated help display alone does not prove native command execution.
+
 ## 5. Package
 
 ```bash

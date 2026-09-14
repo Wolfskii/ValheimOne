@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Read-only public-map checks against an explicitly supplied native fixture."""
+"""Browser regressions against an explicitly supplied native fixture."""
 import json
 import os
 from pathlib import Path
@@ -92,6 +92,29 @@ with sync_playwright() as pw:
         assert not any(x['id'] == pin['id'] for x in pins), 'Test pin must be removed'
         results.append({'native_shared_pin_create_edit_delete': 'pass', 'native_public_pin_rejection': 'pass'})
         context.close()
+
+        admin_token = os.environ.get('VALHEIMONE_BROWSER_ADMIN_TOKEN', '')
+        if admin_token:
+            context = browser.new_context(viewport={'width': 1280, 'height': 900},
+                extra_http_headers={'X-LiveMap-Token': admin_token})
+            page = context.new_page()
+            page.goto(base, wait_until='domcontentloaded')
+            page.locator('#console-tab').click()
+            # Help is rendered in the browser; this query must reach the native console.
+            page.locator('#console-command').fill('banned')
+            page.locator('#console-command').press('Escape')
+            with page.expect_response(lambda r: '/api/console/exec' in r.url and r.request.method == 'POST') as sent:
+                page.locator('#console-command').press('Enter')
+            response = sent.value
+            assert response.request.post_data_json['command'] == 'banned'
+            payload = response.json()
+            assert response.ok and payload.get('ok') is True and payload.get('output'), 'Console must execute the submitted command'
+            denied = page.request.post(base + '/api/console/exec',
+                headers={'X-LiveMap-Token': 'browser-regression-shared'}, data={'command': 'banned'})
+            assert denied.status == 401, 'Shared viewers must not execute admin commands'
+            page.screenshot(path=str(out / 'admin-command-submission.png'))
+            results.append({'native_admin_command_submission': 'pass', 'native_shared_console_rejection': 'pass'})
+            context.close()
     finally:
         browser.close()
         (out / 'result.json').write_text(json.dumps(results, indent=2))
