@@ -1013,6 +1013,7 @@ internal sealed class LiveMapHttpServer
         json.Append("\"mode\":").Append(JsonWriter.Quote(fogMode));
         json.Append(",\"revision\":").Append(fogRevision.ToString(CultureInfo.InvariantCulture));
         json.Append(",\"size\":").Append(FogTracker.Size.ToString(CultureInfo.InvariantCulture));
+        json.Append(",\"worldSpan\":").Append(FogTracker.WorldSpan.ToString(CultureInfo.InvariantCulture));
         json.Append(",\"hide\":").Append(fogHide ? "true" : "false");
         json.Append("}}");
         json.Append(",\"unixMs\":").Append(snapshot.UnixMs.ToString(CultureInfo.InvariantCulture));

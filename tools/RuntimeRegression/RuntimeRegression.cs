@@ -60,6 +60,7 @@ public sealed class RuntimeRegression : BaseUnityPlugin
         {
             TestCrossplayLobbyCollision();
             TestBitmapStorage();
+            TestWebFogCartography();
             TestMapExchange();
             TestChestTransfer();
             TestStations();
@@ -276,6 +277,62 @@ public sealed class RuntimeRegression : BaseUnityPlugin
         package.Write(transfer); package.Write(1); package.Write(0); package.Write(8); package.Write(pixels.Length);
         foreach (int pixel in pixels) { package.Write(pixel % 8); package.Write(pixel % 8); package.Write(pixel / 8); }
         return new ZPackage(package.GetArray());
+    }
+
+    private void TestWebFogCartography()
+    {
+        Assembly assembly = typeof(ValheimOnePlugin).Assembly;
+        Type fogType = assembly.GetType("ValheimOne.LiveMap.FogTracker", true)!;
+        Type readerType = assembly.GetType("ValheimOne.LiveMap.MapTableReader", true)!;
+        string directory = Path.Combine(_root, "web-fog");
+        var log = new ModLogger(Logger);
+        object fog = Activator.CreateInstance(fogType, directory, log)!;
+        object reader = Activator.CreateInstance(readerType, fog, log)!;
+        object Snapshot(object tracker) => AccessTools.Property(fogType, "Snapshot").GetValue(tracker, null)!;
+        bool Explored(object tracker, float x, float z) => (bool)Call(fogType, "IsExplored", Snapshot(tracker), x, z)!;
+        try
+        {
+            Check((float)AccessTools.Field(fogType, "WorldSpan").GetRawConstantValue() == 24576f,
+                "web fog retains its canonical world-space extent");
+            Check((bool)Call(fog, "Stamp", 3000f, -3000f)!, "off-center player trail is recorded");
+            Call(fog, "MarkChanged");
+            Call(fog, "PublishPending", true);
+            Check(Explored(fog, 3000f, -3000f) && !Explored(fog, 6000f, -6000f),
+                "trail data is at the real position, not the doubled display position");
+
+            // Shared-map version 3 still writes one boolean byte per native 2048-square
+            // minimap cell in Valheim 1.0, including when storage is a BitArray.
+            var cells = new byte[2048 * 2048];
+            cells[970 * 2048 + 1142] = 1;
+            cells[1410 * 2048 + 514] = 1;
+            var package = new ZPackage();
+            package.Write(3);
+            package.Write(cells);
+            package.Write(1);
+            package.Write(42L);
+            package.Write("Survey");
+            package.Write(new Vector3(1416f, 0f, -648f));
+            package.Write(0);
+            package.Write(false);
+            package.Write("Fixture");
+            object parsed = Call(reader, "ParseTable", global::Utils.Compress(package.GetArray()))!;
+            var mask = (byte[])AccessTools.Property(parsed.GetType(), "ExploredMask").GetValue(parsed, null)!;
+            Check(mask.Length == 512 * 512 && mask[269 * 512 + 285] != 0 && mask[159 * 512 + 128] != 0,
+                "native compressed cartography data preserves off-center explored cells");
+            var pins = (Array)AccessTools.Property(parsed.GetType(), "Pins").GetValue(parsed, null)!;
+            Check(pins.Length == 1, "cartography pin framing survives the exploration bitmap");
+            Call(fog, "OrExternalMask", mask);
+            Call(fog, "PublishPending", true);
+            Check(Explored(fog, 1416f, -648f) && Explored(fog, -6120f, 4632f) && Explored(fog, 3000f, -3000f),
+                "cartography data and new trails merge without moving or losing either");
+            Check(!Explored(fog, 2832f, -1296f), "unvisited doubled cartography position stays covered");
+            Call(fog, "Stop");
+            object restored = Activator.CreateInstance(fogType, directory, log)!;
+            try { Check(Explored(restored, 1416f, -648f) && Explored(restored, 3000f, -3000f),
+                "existing fog cache preserves cartography and trails after reload"); }
+            finally { Call(restored, "Stop"); }
+        }
+        finally { Call(fog, "Stop"); }
     }
 
     private void TestMapExchange()
@@ -634,4 +691,43 @@ public sealed class RuntimeRegression : BaseUnityPlugin
         AccessTools.Property(target.GetType(), name).SetValue(target, value, null);
     private static object? Call(object target, string name, params object[] args) =>
         AccessTools.Method(target as Type ?? target.GetType(), name).Invoke(target is Type ? null : target, args);
+}
+
+// Opt-in spatial fixture for browser checks. It records known coordinates using
+// the real fog tracker and must only run in a disposable test world.
+[BepInPlugin("com.humangenome.valheimone.foggeometry", "ValheimOne fog geometry probe", "1.0.0")]
+[BepInDependency(ValheimOnePlugin.PluginGuid)]
+public sealed class FogGeometryProbe : BaseUnityPlugin
+{
+    private bool _done;
+    private float _next;
+
+    private void Awake()
+    {
+        enabled = Environment.GetEnvironmentVariable("VALHEIMONE_FOG_GEOMETRY") == "1";
+    }
+
+    private void Update()
+    {
+        if (_done || Time.realtimeSinceStartup < _next) return;
+        _next = Time.realtimeSinceStartup + 0.5f;
+        Type behaviourType = typeof(ValheimOnePlugin).Assembly.GetType("ValheimOne.LiveMap.LiveMapBehaviour", true)!;
+        var behaviour = AccessTools.Property(behaviourType, "Instance").GetValue(null, null) as UnityEngine.Object;
+        if (behaviour == null) return;
+        object? server = AccessTools.Field(behaviourType, "_httpServer").GetValue(behaviour);
+        if (server == null || !(bool)AccessTools.Property(server.GetType(), "IsRunning").GetValue(server, null)) return;
+        object? tracker = AccessTools.Field(behaviourType, "_fogTracker").GetValue(behaviour);
+        if (tracker == null) return;
+        Type type = tracker.GetType();
+        AccessTools.Method(type, "Stamp").Invoke(tracker, new object[] { 3000f, -3000f });
+        AccessTools.Method(type, "Stamp").Invoke(tracker, new object[] { -6120f, 4632f });
+        AccessTools.Method(type, "MarkChanged").Invoke(tracker, Array.Empty<object>());
+        AccessTools.Method(type, "PublishPending").Invoke(tracker, new object[] { true });
+        string directory = Path.Combine(Paths.ConfigPath, "runtime-regression");
+        Directory.CreateDirectory(directory);
+        File.WriteAllText(Path.Combine(directory, "fog-geometry-ready.json"),
+            "{\"worldSpan\":24576,\"points\":[{\"x\":3000,\"z\":-3000},{\"x\":-6120,\"z\":4632}]}");
+        Logger.LogInfo("FOG GEOMETRY READY: known world coordinates recorded in the native tracker.");
+        _done = true;
+    }
 }

@@ -34,6 +34,9 @@ jobs:
         shell: bash
         run: tools/ci/assert-version.sh
 
+      - name: Fog world-coordinate regression
+        run: node tools/ci/test-fog-geometry.cjs
+
       - name: Build ValheimOne
         shell: bash
         run: |

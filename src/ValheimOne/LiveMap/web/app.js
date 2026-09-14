@@ -233,6 +233,8 @@
     var MARKER_TWEEN_MAX_DURATION_MS = 30000;
     var TILE_SIZE = 256;
     var WORLD_UNITS = 256;
+    // Version-one fog and cartography masks cover this fixed world-space extent.
+    var DEFAULT_FOG_WORLD_SPAN = 24576;
     var OVERVIEW_CLUSTER_ZOOM = 2;
     var OVERVIEW_CLUSTER_GRID_PX = 64;
     var DUNGEON_MATCH_DISTANCE_M = 8;
@@ -893,7 +895,7 @@
     var poiRequestSequence = 0;
     var poiLoadPending = false;
     var pinsPollingStarted = false;
-    var fogStatus = { mode: "off", revision: "0", size: 0, hide: false };
+    var fogStatus = { mode: "off", revision: "0", size: 0, hide: false, worldSpan: DEFAULT_FOG_WORLD_SPAN };
     var fogHiddenRevision = null;
     var fogAvailable = false;
     var fogOverlay = null;
@@ -6040,6 +6042,14 @@
         };
     }
 
+    function fogWorldBounds() {
+        var half = fogStatus.worldSpan / 2;
+        return L.latLngBounds(
+            worldToLatLng(-half, -half),
+            worldToLatLng(half, half)
+        );
+    }
+
     function createActivityHeatmapLayer(options) {
         options = options || {};
         var canvasClass = options.canvasClass || "activity-heatmap-canvas";
@@ -6243,12 +6253,9 @@
                     return;
                 }
 
-                var northWest = this._map.latLngToContainerPoint(
-                    worldBounds.getNorthWest()
-                );
-                var southEast = this._map.latLngToContainerPoint(
-                    worldBounds.getSouthEast()
-                );
+                var bounds = fogWorldBounds();
+                var northWest = this._map.latLngToContainerPoint(bounds.getNorthWest());
+                var southEast = this._map.latLngToContainerPoint(bounds.getSouthEast());
                 context.imageSmoothingEnabled = false;
                 context.drawImage(
                     this._source,
@@ -16828,11 +16835,14 @@
         var mode = status && typeof status.mode === "string" ? status.mode.toLowerCase() : "off";
         var revisionNumber = status ? Number(status.revision) : 0;
         var sizeNumber = status ? Number(status.size) : 0;
+        var worldSpan = status ? Number(status.worldSpan) : 0;
         fogStatus = {
             mode: mode,
             revision: Number.isFinite(revisionNumber) ? String(Math.max(0, Math.floor(revisionNumber))) : "0",
             size: Number.isFinite(sizeNumber) ? Math.max(0, Math.floor(sizeNumber)) : 0,
-            hide: Boolean(status && status.hide === true && mode !== "off")
+            hide: Boolean(status && status.hide === true && mode !== "off"),
+            worldSpan: Number.isFinite(worldSpan) && worldSpan > 0 && worldSpan <= 1000000
+                ? worldSpan : DEFAULT_FOG_WORLD_SPAN
         };
 
         var wasAvailable = fogAvailable;
@@ -16880,7 +16890,22 @@
         if (minimapFogImage.getAttribute("src") !== url) {
             minimapFogImage.src = url;
         }
+        updateMinimapFogBounds();
         minimapFogImage.hidden = false;
+    }
+
+    function updateMinimapFogBounds() {
+        if (!minimapFogImage || !mapMetrics) {
+            return;
+        }
+        var ratio = fogStatus.worldSpan / (mapMetrics.textureSize * mapMetrics.pixelSize);
+        var offset = ((1 - ratio) * 50) + "%";
+        minimapFogImage.style.left = offset;
+        minimapFogImage.style.top = offset;
+        minimapFogImage.style.right = "auto";
+        minimapFogImage.style.bottom = "auto";
+        minimapFogImage.style.width = (ratio * 100) + "%";
+        minimapFogImage.style.height = (ratio * 100) + "%";
     }
 
     // Under the solid cover the server drops unexplored region names and spawn/trader
@@ -16964,6 +16989,13 @@
         var revision = fogStatus.revision;
         var cacheKey = fogCacheKey(revision);
         var url = fogUrl(revision);
+        if (fogOverlay) {
+            var bounds = fogWorldBounds();
+            if (!fogOverlay.getBounds().equals(bounds)) {
+                fogOverlay.setBounds(bounds);
+            }
+            updateMinimapFogBounds();
+        }
         if (!fogOverlay) {
             if (cacheKey === fogRequestedRevision) {
                 syncLayerVisibility();
@@ -16981,7 +17013,7 @@
                     return;
                 }
 
-                fogOverlay = L.imageOverlay(url, worldBounds, {
+                fogOverlay = L.imageOverlay(url, fogWorldBounds(), {
                     className: "fog-overlay",
                     interactive: false,
                     opacity: 1,

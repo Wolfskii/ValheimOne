@@ -34,7 +34,7 @@
 
 ### 🗺️ Live World Map
 
-Your whole world in a browser, drawn from the server seed and updating in real time. Players, ships, carts, portals, tombstones, wards and beds move as they happen. Fog-of-war can mirror exactly what your vikings have actually charted.
+Your whole world in a browser, drawn from the server seed and updating in real time. Players, ships, carts, portals, tombstones, wards and beds move as they happen. Fog-of-war follows recorded player trails and exploration shared through cartography tables.
 
 ![ValheimOne Live Map, admin view](docs/screenshots/valheimone-live-map-20260909-r3.png)
 

@@ -60,6 +60,9 @@ jobs:
         shell: bash
         run: tools/ci/assert-contract-pass.sh
 
+      - name: Fog world-coordinate regression
+        run: node tools/ci/test-fog-geometry.cjs
+
       - name: Resolve version
         id: version
         shell: bash
