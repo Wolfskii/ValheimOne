@@ -94,6 +94,8 @@ See [docs/query.md](docs/query.md).
 
 ## Installation
 
+The [Steam setup guide](https://steamcommunity.com/sharedfiles/filedetails/?id=3802119003) walks through installation, private map access, sharing and browser commands.
+
 ### Install on your server
 
 You need a Valheim Dedicated Server with the Valheim-compatible [BepInEx pack](https://thunderstore.io/c/valheim/p/denikson/BepInExPack_Valheim/).
