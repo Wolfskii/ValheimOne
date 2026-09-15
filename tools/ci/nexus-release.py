@@ -221,14 +221,20 @@ def main():
         outputs[kind + "_upload"] = "false" if current else "true"
         if current:
             current_files[kind] = current
-            verify_indexed_hash(folder, filename, current)
             if bool(current.get("is_primary")) != (kind == "plugin"):
                 raise ValueError("Plugin-only must be the primary Nexus download")
         elif args.mode == "verify":
             raise ValueError(f"Nexus {kind} version is missing")
-        print(f"Nexus {kind}: {'present and hash-index verified' if current else 'upload required'}")
-    if args.mode == "verify":
+        print(f"Nexus {kind}: {'version present' if current else 'upload required'}")
+    # Quarantined files can disappear from the legacy hash index. Report the
+    # actual moderation state before that lookup can obscure it with a 404.
+    if len(current_files) == 2:
         verify_public_downloads(public_download_status(mod["game_id"]), version, current_files)
+    for kind, filename in zip(["plugin", "full"], names):
+        if kind in current_files:
+            verify_indexed_hash(folder, filename, current_files[kind])
+            print(f"Nexus {kind}: hash-index verified")
+    if args.mode == "verify":
         changelogs = nexus(f"/v1/games/valheim/mods/{MOD_PAGE_ID}/changelogs.json")
         if version not in changelogs:
             raise ValueError("Nexus release changelog is missing")
