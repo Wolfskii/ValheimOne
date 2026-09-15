@@ -4,6 +4,12 @@ All notable changes to ValheimOne will be documented in this file. This project 
 
 ## [Unreleased]
 
+## [0.13.14] - 2026-09-15
+
+### Fixed
+
+- Map pages now request scripts and styles for their exact plugin release. Returning visitors no longer reuse a previous release’s cached interface after a server update, which could leave the new Admin Fog preview missing. Authentication and saved map preferences are preserved.
+
 ## [0.13.13] - 2026-09-15
 
 ### Added

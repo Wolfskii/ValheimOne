@@ -4,6 +4,7 @@ import json
 import os
 from pathlib import Path
 import sys
+from urllib.parse import urlsplit, parse_qs
 from playwright.sync_api import sync_playwright
 
 if os.environ.get('ATLAS_QA_REMOTE') != '1':
@@ -27,6 +28,9 @@ with sync_playwright() as pw:
             page.on('pageerror', lambda error: errors.append(str(error)))
             response = page.goto(base, wait_until='domcontentloaded')
             assert response.status == 200, 'Native map HTML must load'
+            version = page.request.get(base + '/api/status').json()['pluginVersion']
+            scripts = page.locator('script[src*="/assets/"]').evaluate_all('(els) => els.map(el => el.src)')
+            assert scripts and all(parse_qs(urlsplit(src).query).get('v') == [version] for src in scripts), 'Every script URL must select the running release'
             page.wait_for_function("document.querySelector('.fog-overlay')?.naturalWidth > 0", timeout=120000)
             assert page.locator('input[data-layer-key="fog"]').count() == 0, 'Required fog must have no disable control'
             assert page.locator('.fog-overlay').is_visible(), 'Saved fog=false must not disable required fog'
@@ -43,6 +47,8 @@ with sync_playwright() as pw:
                 real = route.fetch()
                 payload = real.json()
                 payload['map']['fog']['hide'] = locked[0]
+                if 'locked' in payload['map']['fog']:
+                    payload['map']['fog']['locked'] = locked[0]
                 route.fulfill(response=real, json=payload)
             page.route('**/api/status*', status_change)
             page.wait_for_selector('input[data-layer-key="fog"]', state='attached', timeout=30000)

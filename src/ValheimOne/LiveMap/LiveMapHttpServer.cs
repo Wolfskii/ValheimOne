@@ -676,9 +676,13 @@ internal sealed class LiveMapHttpServer
         string token = viewLevel == ViewLevel.Admin
             ? AccessToken
             : viewLevel == ViewLevel.Shared ? ShareToken : string.Empty;
-        string tokenQuery = string.IsNullOrEmpty(token)
-            ? string.Empty
-            : "?token=" + Uri.EscapeDataString(token);
+        // Keep cached scripts and styles tied to the release that serves this page.
+        // Otherwise a returning viewer can retain an older interface after upgrading.
+        string tokenQuery = "?v=" + Uri.EscapeDataString(VersionInfo.PluginVersion);
+        if (!string.IsNullOrEmpty(token))
+        {
+            tokenQuery += "&token=" + Uri.EscapeDataString(token);
+        }
         html = html.Replace("{{TOKEN_QUERY}}", tokenQuery);
         html = html.Replace("{{TOKEN_VALUE}}", HtmlAttributeEncode(token));
         WriteBytes(
