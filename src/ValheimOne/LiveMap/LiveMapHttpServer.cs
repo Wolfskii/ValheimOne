@@ -678,7 +678,7 @@ internal sealed class LiveMapHttpServer
             : viewLevel == ViewLevel.Shared ? ShareToken : string.Empty;
         // Keep cached scripts and styles tied to the release that serves this page.
         // Otherwise a returning viewer can retain an older interface after upgrading.
-        string tokenQuery = "?v=" + Uri.EscapeDataString(VersionInfo.PluginVersion);
+        string tokenQuery = "?v=" + Uri.EscapeDataString(ValheimOnePlugin.PluginVersion);
         if (!string.IsNullOrEmpty(token))
         {
             tokenQuery += "&token=" + Uri.EscapeDataString(token);
