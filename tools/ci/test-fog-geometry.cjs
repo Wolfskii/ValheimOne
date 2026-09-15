@@ -65,6 +65,26 @@ for(const textureSize of [256,512,1024,2048,4096]) {
         assert.equal(layer._imageData.data[(index+1)*4+3],209,'Adjacent unexplored cell stays covered');
     }
 }
+sandbox.fogStatus.hide=true;
+const opaqueHistory=sandbox.createTimelapseFogLayer();
+opaqueHistory.setData([512*512]);
+assert.equal(opaqueHistory._imageData.data[3],255,'Opaque fog stays opaque in history');
 if(failures.length){console.error(failures.join('\n'));process.exit(1);}
 assert.match(source,/L\.imageOverlay\(url, fogWorldBounds\(\)/,'Live overlay must use the tested bounds');
+// The actual role-aware functions must keep the optional Admin preference separate
+// from locked Shared/Public fog, and never decorate admin action requests.
+for(const name of ['fogLayerIsEnabled','authorizedUrl','mapVisibilityKey'])vm.runInContext(extract(name),sandbox);
+Object.assign(sandbox,{currentView:'admin',fogAvailable:true,fogStatus:{hide:true,locked:false,revision:'7',poiPolicy:'all'},
+    layerSettings:{fog:true,adminFog:false},embedMode:false,token:'fixture-token'});
+assert.equal(sandbox.fogLayerIsEnabled(),false,'Admin starts without changing the existing full map');
+sandbox.layerSettings.adminFog=true;
+assert.equal(sandbox.fogLayerIsEnabled(),true,'Admin opts into the exploration preview');
+assert.match(sandbox.authorizedUrl('/api/pois?group=trader'),/fogpreview=1/);
+assert.doesNotMatch(sandbox.authorizedUrl('/api/console/exec'),/fogpreview/);
+assert.doesNotMatch(sandbox.authorizedUrl('/api/admin/save'),/fogpreview/);
+sandbox.currentView='shared';sandbox.fogStatus.locked=true;sandbox.layerSettings.fog=false;
+assert.equal(sandbox.fogLayerIsEnabled(),true,'A stale Shared fog=false preference cannot bypass owner fog');
+assert.doesNotMatch(sandbox.authorizedUrl('/api/pois'),/fogpreview/);
+sandbox.currentView='public';assert.equal(sandbox.fogLayerIsEnabled(),true,'Public opaque fog remains locked');
+sandbox.fogAvailable=false;assert.equal(sandbox.fogLayerIsEnabled(),false,'FogMode off disables all fog views');
 console.log('Fog geometry passed: live map, minimap and history at 256/512/1024/2048/4096, three off-center cells each.');

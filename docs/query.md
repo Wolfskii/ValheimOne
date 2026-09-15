@@ -38,7 +38,7 @@ curl http://<server-ip>:8790/api/status
 | `view` | `admin`, `shared`, or `public` — which view level answered the request. |
 | `console` | `true` only for admin-token requests when the web console is enabled. |
 | `map.state` / `map.progress` | World-render lifecycle for the map front-end. |
-| `map.fog` | Fog treatment the caller's view receives: `mode` is `off`, `trails` or `explored` (always `off` above the public tier), `revision` advances as ground is revealed, and `hide` is `true` when `FogHideUnexplored` turns the public cover opaque and withholds unexplored region names and spawn/trader markers. |
+| `map.fog` | Fog available to this view: `mode` is `off`, `trails` or `explored`; `revision` advances as ground is revealed; `worldSpan` is its fixed world extent. `hide` selects an opaque cover, while `locked` requires it. Public opaque fog and enabled Shared fog are locked; Admin has an optional preview. `poiPolicy` reports the Shared point-of-interest allowlist. |
 
 ## Access rules
 
@@ -166,3 +166,16 @@ python -m pip install python-a2s
 ```python
 import a2s; a2s.info(("ip", port))
 ```
+
+## Shared point-of-interest groups
+
+`SharedPoiGroups` accepts `all` (default), `none`, or these space-separated keys.
+Unknown keys grant no additional group access. Shared viewers cannot override this setting
+through URL parameters. Chat, stats, player positions and user-created pins are separate from
+these point-of-interest layers. Fog hides unknown points even within an allowed group.
+
+`spawn`, `boss`, `trader`, `dungeon_crypt`, `dungeon_sunkencrypt`, `dungeon_trollcave`, `dungeon_frostcave`, `dungeon_mine`, `dungeon_ashlands`, `spawner_greydwarf`, `spawner_bonepile`, `spawner_draugrpile`, `spawner_firehole`, `spawner_charred`, `spawner_other`, `ore_copper`, `ore_tin`, `ore_iron`, `ore_silver`, `ore_obsidian`, `ore_meteorite`, `ore_leviathan`, `forage_berries`, `forage_thistle`, `forage_mushroom`, `forage_seeds`, `forage_crops`, `forage_dragonegg`, `forage_blackcore`, `structure_camp`, `structure_tarpit`, `structure_shipwreck`, `structure_ruins`, `structure_mistlands`, `structure_runestone`, `bases`, `misc`, `ghosts`.
+
+Admin map requests may use `fogpreview=1` on `/api/pois`, `/api/regions` and `/fog.png`
+to render an exploration preview. This is an optional display choice, never an authentication
+parameter. It cannot disable owner-enforced fog or permit a denied Shared group.

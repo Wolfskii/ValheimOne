@@ -28,6 +28,8 @@ internal sealed class LiveMapConfig
     private readonly ConfigEntryBool _resourceLayers;
     private readonly ConfigEntryString _fogMode;
     private readonly ConfigEntryBool _fogHideUnexplored;
+    private readonly ConfigEntryBool _sharedFog;
+    private readonly ConfigEntryString _sharedPoiGroups;
     private readonly ConfigEntryBool _consoleEnabled;
     private readonly ConfigEntryString _consoleWhitelist;
     private readonly ConfigEntryBool _allowAllCommands;
@@ -57,6 +59,8 @@ internal sealed class LiveMapConfig
         ConfigEntryBool resourceLayers,
         ConfigEntryString fogMode,
         ConfigEntryBool fogHideUnexplored,
+        ConfigEntryBool sharedFog,
+        ConfigEntryString sharedPoiGroups,
         ConfigEntryBool consoleEnabled,
         ConfigEntryString consoleWhitelist,
         ConfigEntryBool allowAllCommands,
@@ -85,6 +89,8 @@ internal sealed class LiveMapConfig
         _resourceLayers = resourceLayers;
         _fogMode = fogMode;
         _fogHideUnexplored = fogHideUnexplored;
+        _sharedFog = sharedFog;
+        _sharedPoiGroups = sharedPoiGroups;
         _consoleEnabled = consoleEnabled;
         _consoleWhitelist = consoleWhitelist;
         _allowAllCommands = allowAllCommands;
@@ -176,4 +182,23 @@ internal sealed class LiveMapConfig
     }
 
     public bool FogHideUnexplored => _fogHideUnexplored.Value;
+
+    public bool SharedFog => _sharedFog.Value;
+
+    public string SharedPoiGroups => (_sharedPoiGroups.Value ?? string.Empty).Trim().ToLowerInvariant();
+
+    public bool AllowsSharedPoiGroup(string group)
+    {
+        string[] allowed = SharedPoiGroups.Split(new[] { ' ', ',', '\t', '\r', '\n' },
+            StringSplitOptions.RemoveEmptyEntries);
+        foreach (string key in allowed)
+        {
+            if (key == "all" || key == group)
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
 }

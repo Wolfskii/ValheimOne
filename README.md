@@ -143,6 +143,25 @@ REPRODUCIBLE <version>
 
 ## Configuration
 
+### Fog and Shared map layers
+
+In `[LiveMap]`, set `FogMode = trails` or `explored` to record the fog you want to display.
+`SharedFog = true` gives Shared viewers a locked opaque cover and hides unexplored
+points of interest and region names while preserving chat and stats. It defaults to false.
+Public opaque fog remains controlled by `FogHideUnexplored`.
+
+`SharedPoiGroups = all` preserves all point-of-interest layers. Use `none` to hide them,
+or a space-separated selection such as `spawn trader` to show only those groups.
+The setting applies to both the layer list and direct point-of-interest requests.
+[Available group keys](docs/query.md#shared-point-of-interest-groups) are documented in the API reference.
+
+Admins can enable **Fog preview** in Layers when `FogMode` is enabled. It starts off and
+remembers the choice separately from Public fog. Turning it on also hides unexplored
+point-of-interest markers and region names; it does not change admin permissions.
+Fog is a map-display feature and does not restrict access to underlying terrain images.
+These settings apply live after the configuration reloads; preserve existing configuration when updating.
+
+
 Everything lives in one file: `BepInEx/config/valheimone.cfg`. Every gameplay section is off by default, so a fresh install changes nothing until you opt in.
 
 Start the server once to generate the file, then enable the sections you want:

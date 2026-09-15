@@ -657,6 +657,7 @@
         structure_runestone: false,
         misc: false,
         fog: true,
+        adminFog: false,
         heatmap: false,
         heatmapWindow: "24h",
         timelapse: false,
@@ -895,7 +896,7 @@
     var poiRequestSequence = 0;
     var poiLoadPending = false;
     var pinsPollingStarted = false;
-    var fogStatus = { mode: "off", revision: "0", size: 0, hide: false, worldSpan: DEFAULT_FOG_WORLD_SPAN };
+    var fogStatus = { mode: "off", revision: "0", size: 0, hide: false, locked: false, poiPolicy: "all", worldSpan: DEFAULT_FOG_WORLD_SPAN };
     var fogHiddenRevision = null;
     var fogAvailable = false;
     var fogOverlay = null;
@@ -1150,6 +1151,10 @@
         var url = embedMode
             ? embedApiBase + path.replace(/^\/+/, "")
             : path;
+        if (currentView === "admin" && layerSettings.adminFog &&
+            /^\/(?:api\/(?:pois|regions)|fog\.png)(?:\?|$)/.test(path)) {
+            url += (url.indexOf("?") === -1 ? "?" : "&") + "fogpreview=1";
+        }
         if (!token || includeToken === false) {
             return url;
         }
@@ -6215,7 +6220,7 @@
                 var cellIndex = 0;
                 for (var runIndex = 0; runIndex < runs.length; runIndex++) {
                     var end = cellIndex + Number(runs[runIndex]);
-                    var alpha = explored ? 0 : 209;
+                    var alpha = explored ? 0 : (fogStatus.hide ? 255 : 209);
                     while (cellIndex < end) {
                         this._imageData.data[(cellIndex * 4) + 3] = alpha;
                         cellIndex++;
@@ -7538,8 +7543,10 @@
         }
 
         regionsRequested = true;
+        var visibilityKey = mapVisibilityKey();
         try {
             var payload = await fetchJson("/api/regions");
+            if (visibilityKey !== mapVisibilityKey()) { return; }
             var regions = payload && Array.isArray(payload.regions) ? payload.regions : [];
             regionLayer.clearLayers();
             regionLabelRecords = [];
@@ -10047,8 +10054,9 @@
             : ["fog"];
         var overlaysBody = appendLayerSection("overlays", "Overlays", overlayFeeds);
         appendMapStyleControl(overlaysBody);
-        if (fogAvailable && !fogStatus.hide) {
-            appendLayerRow(overlaysBody, "fog", "Fog", "≈", "fog", { counted: false });
+        if (fogAvailable && !fogStatus.locked) {
+            appendLayerRow(overlaysBody, currentView === "admin" ? "adminFog" : "fog",
+                currentView === "admin" ? "Fog preview" : "Fog", "≈", "fog", { counted: false });
         }
         if (hasLiveAccess()) {
             appendLayerRow(
@@ -10266,12 +10274,14 @@
     }
 
     function setSectionLayers(section, isEnabled) {
+        var fogWasEnabled = fogLayerIsEnabled();
         var trailsWereEnabled = layerSettings.trails;
         section.querySelectorAll("input[data-layer-key]").forEach(function (checkbox) {
             checkbox.checked = isEnabled;
             layerSettings[checkbox.dataset.layerKey] = isEnabled;
         });
         saveLayerSettings();
+        if (fogWasEnabled !== fogLayerIsEnabled()) { applyFogStatus(); }
         syncLayerVisibility();
         scheduleHashUpdate();
         if (!trailsWereEnabled && layerSettings.trails) {
@@ -10435,6 +10445,9 @@
         addAppListener(checkbox, "change", function () {
             layerSettings[key] = checkbox.checked;
             saveLayerSettings();
+            if (key === "adminFog" || key === "fog") {
+                applyFogStatus();
+            }
             syncLayerVisibility();
             scheduleHashUpdate();
             if (key === "trails" && checkbox.checked) {
@@ -11336,6 +11349,7 @@
         if (minimapSetOpen) {
             minimapSetOpen(layerSettings.minimap, false);
         }
+        if (minimapFogImage) { minimapFogImage.hidden = !fogLayerIsEnabled() || !minimapFogImage.getAttribute("src"); }
         renderPortalLinks();
         renderTrails();
         renderLegend();
@@ -14905,6 +14919,7 @@
             return;
         }
 
+        var visibilityKey = mapVisibilityKey();
         var state = getLazyPoiState(group);
         var resource = isResourcePoiGroup(group);
         var refreshes = lazyPoiRefreshesWhileVisible(group);
@@ -14920,7 +14935,7 @@
         try {
             var payload = await fetchJson("/api/pois?group=" + encodeURIComponent(group));
             recordPollSuccess("poi-" + group);
-            if (lazyPoiStates.get(group) !== state ||
+            if (visibilityKey !== mapVisibilityKey() || lazyPoiStates.get(group) !== state ||
                 normalizePoiGroup(payload && payload.group) !== group) {
                 return;
             }
@@ -15008,7 +15023,7 @@
     }
 
     async function loadPoisForCurrentView() {
-        var accessKey = currentView;
+        var accessKey = mapVisibilityKey();
         if (!map || !currentView || lastPoiRequestedView === accessKey) {
             return;
         }
@@ -15022,7 +15037,7 @@
         try {
             var payload = await fetchJson("/api/pois");
             if (requestSequence !== poiRequestSequence ||
-                requestView !== currentView) {
+                requestView !== mapVisibilityKey()) {
                 return;
             }
 
@@ -15098,7 +15113,7 @@
             syncLayerVisibility();
         } catch (error) {
             if (requestSequence === poiRequestSequence &&
-                requestView === currentView) {
+                requestView === mapVisibilityKey()) {
                 poiLoadPending = false;
                 setFeedState("pois", false);
                 renderLayerRows();
@@ -16827,11 +16842,12 @@
     }
 
     function fogLayerIsEnabled() {
-        return fogAvailable && (fogStatus.hide || layerSettings.fog);
+        return fogAvailable && (fogStatus.locked ||
+            (currentView === "admin" ? layerSettings.adminFog : layerSettings.fog));
     }
 
     function updateFogStatus(status) {
-        var wasLocked = fogStatus.hide;
+        var wasLocked = fogStatus.locked;
         var mode = status && typeof status.mode === "string" ? status.mode.toLowerCase() : "off";
         var revisionNumber = status ? Number(status.revision) : 0;
         var sizeNumber = status ? Number(status.size) : 0;
@@ -16841,12 +16857,15 @@
             revision: Number.isFinite(revisionNumber) ? String(Math.max(0, Math.floor(revisionNumber))) : "0",
             size: Number.isFinite(sizeNumber) ? Math.max(0, Math.floor(sizeNumber)) : 0,
             hide: Boolean(status && status.hide === true && mode !== "off"),
+            locked: Boolean(status && mode !== "off" &&
+                (typeof status.locked === "boolean" ? status.locked : status.hide === true)),
+            poiPolicy: status && typeof status.poiPolicy === "string" ? status.poiPolicy : "all",
             worldSpan: Number.isFinite(worldSpan) && worldSpan > 0 && worldSpan <= 1000000
                 ? worldSpan : DEFAULT_FOG_WORLD_SPAN
         };
 
         var wasAvailable = fogAvailable;
-        fogAvailable = fogStatus.mode !== "off" && !hasLiveAccess();
+        fogAvailable = fogStatus.mode !== "off";
         if (fogStatus.hide && fogAvailable) {
             window.clearTimeout(fogCoverTimer);
             fogCoverTimer = 0;
@@ -16854,7 +16873,7 @@
             window.clearTimeout(fogCoverTimer);
             fogCoverTimer = window.setTimeout(hideFogCover, 8000);
         }
-        if (wasAvailable !== fogAvailable || wasLocked !== fogStatus.hide) {
+        if (wasAvailable !== fogAvailable || wasLocked !== fogStatus.locked) {
             renderLayerRows();
         }
         applyFogStatus();
@@ -16882,7 +16901,7 @@
         if (!minimapFogImage) {
             return;
         }
-        if (!fogAvailable || !url) {
+        if (!fogLayerIsEnabled() || !url) {
             minimapFogImage.hidden = true;
             minimapFogImage.removeAttribute("src");
             return;
@@ -16913,20 +16932,23 @@
     // the cover switching on or off while the page is open, or a newer fog revision
     // under the cover (newly revealed ground). Feeds not loaded yet load under the
     // current state on their own, so nothing is fetched twice at startup.
+    function mapVisibilityKey() {
+        return currentView + "|" + (fogStatus.poiPolicy || "all") + "|" +
+            (fogStatus.hide && fogLayerIsEnabled() ? fogStatus.revision : "full");
+    }
+
     function refreshHiddenFogFeeds() {
-        var key = fogStatus.hide && fogAvailable ? fogStatus.revision : null;
+        var key = mapVisibilityKey();
         if (key === fogHiddenRevision) {
             return;
         }
-        var wasHidden = fogHiddenRevision !== null;
         fogHiddenRevision = key;
-        if (!map || lastPoiRequestedView === null) {
-            return;
-        }
-        if (key === null && !wasHidden) {
+        if (!map) {
             return;
         }
         regionsRequested = false;
+        if (regionLayer) { regionLayer.clearLayers(); }
+        regionLabelRecords = [];
         loadRegions();
         lastPoiRequestedView = null;
         loadPoisForCurrentView();
@@ -16970,7 +16992,7 @@
             return;
         }
 
-        if (!fogAvailable) {
+        if (!fogLayerIsEnabled()) {
             fogLoadSequence++;
             fogRequestedRevision = null;
             fogDisplayedRevision = null;
@@ -16986,6 +17008,7 @@
         }
 
         refreshHiddenFogFeeds();
+        if (fogStatus.hide && !fogOverlay) { showFogCover(); }
         var revision = fogStatus.revision;
         var cacheKey = fogCacheKey(revision);
         var url = fogUrl(revision);

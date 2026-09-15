@@ -468,7 +468,7 @@ internal sealed class LiveMapHttpServer
             }
             else if (isGet && path == "/api/regions")
             {
-                ServeRegions(response, viewLevel);
+                ServeRegions(request, response, viewLevel);
             }
             else if (isGet && path == "/api/pins")
             {
@@ -938,7 +938,8 @@ internal sealed class LiveMapHttpServer
         string chartProgress = JsonWriter.Number(_renderer.GetStyleProgress(MapStyle.Chart));
         string chartRevision = _renderer.GetStyleRevision(MapStyle.Chart);
         string fogMode = GetEffectiveFogMode(viewLevel);
-        bool fogHide = GetEffectiveFogHide(viewLevel);
+        bool fogHide = GetEffectiveFogHide(viewLevel) ||
+                       (viewLevel == ViewLevel.Admin && fogMode != "off");
         FogMaskSnapshot fogSnapshot = _fogTracker.Snapshot;
         long fogRevision = fogMode == "off" ? 0 : fogSnapshot.Revision;
         double exploredPct = GetExploredPercentage(fogSnapshot);
@@ -1015,6 +1016,9 @@ internal sealed class LiveMapHttpServer
         json.Append(",\"size\":").Append(FogTracker.Size.ToString(CultureInfo.InvariantCulture));
         json.Append(",\"worldSpan\":").Append(FogTracker.WorldSpan.ToString(CultureInfo.InvariantCulture));
         json.Append(",\"hide\":").Append(fogHide ? "true" : "false");
+        json.Append(",\"locked\":").Append(fogHide && viewLevel != ViewLevel.Admin ? "true" : "false");
+        json.Append(",\"poiPolicy\":").Append(JsonWriter.Quote(
+            viewLevel == ViewLevel.Shared ? _config.SharedPoiGroups : "all"));
         json.Append("}}");
         json.Append(",\"unixMs\":").Append(snapshot.UnixMs.ToString(CultureInfo.InvariantCulture));
         json.Append(",\"snapshotAgeMs\":").Append(snapshotAgeMs.ToString(CultureInfo.InvariantCulture));
@@ -1050,6 +1054,8 @@ internal sealed class LiveMapHttpServer
         key.Append(chartRevision).Append('|');
         key.Append(fogRevision.ToString(CultureInfo.InvariantCulture)).Append('|');
         key.Append(fogHide ? "hide" : "ghost").Append('|');
+        key.Append(fogMode).Append('|');
+        key.Append(viewLevel == ViewLevel.Shared ? _config.SharedPoiGroups : "all").Append('|');
         long lastSavedMinute = lastSavedUnixMs > 0L ? lastSavedUnixMs / 60000L : 0L;
         key.Append(lastSavedMinute.ToString(CultureInfo.InvariantCulture)).Append('|');
         key.Append(snapshotStale ? "stale" : "fresh");
@@ -3455,7 +3461,7 @@ internal sealed class LiveMapHttpServer
             .ToLowerInvariant();
         if (!string.IsNullOrEmpty(requestedGroup))
         {
-            ServePoiGroup(response, viewLevel, requestedGroup);
+            ServePoiGroup(request, response, viewLevel, requestedGroup);
             return;
         }
 
@@ -3468,7 +3474,7 @@ internal sealed class LiveMapHttpServer
         IReadOnlyList<PoiSnapshot> pois = catalog.ServedPois;
         IReadOnlyList<PoiGroupDefinition> definitions = PoiGroups.All;
         FogMaskSnapshot fogSnapshot = _fogTracker.Snapshot;
-        bool hideUnexplored = GetEffectiveFogHide(viewLevel);
+        bool hideUnexplored = GetEffectiveFogHide(viewLevel, request);
         long unixMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
         var json = new StringBuilder(128 + (pois.Count * 96));
         var deferredGroups = new HashSet<string>(StringComparer.Ordinal);
@@ -3480,7 +3486,8 @@ internal sealed class LiveMapHttpServer
         {
             PoiGroupDefinition definition = definitions[index];
             if ((viewLevel == ViewLevel.Public && !PoiGroups.IsPublic(definition.Key)) ||
-                (definition.Resource && !_config.ResourceLayers))
+                (definition.Resource && !_config.ResourceLayers) ||
+                (viewLevel == ViewLevel.Shared && !_config.AllowsSharedPoiGroup(definition.Key)))
             {
                 continue;
             }
@@ -3497,11 +3504,15 @@ internal sealed class LiveMapHttpServer
             bool truncated = false;
             if (string.Equals(definition.Key, "ghosts", StringComparison.Ordinal))
             {
-                count = visibleGhosts?.Count ?? 0;
+                count = visibleGhosts == null ? 0 : hideUnexplored
+                    ? visibleGhosts.FindAll(ghost => FogTracker.IsExplored(fogSnapshot, ghost.X, ghost.Z)).Count
+                    : visibleGhosts.Count;
             }
             else if (string.Equals(definition.Key, "bases", StringComparison.Ordinal))
             {
-                count = baseSnapshot.Count;
+                count = hideUnexplored
+                    ? Array.FindAll(baseSnapshot.Bases, entry => FogTracker.IsExplored(fogSnapshot, entry.X, entry.Z)).Length
+                    : baseSnapshot.Count;
                 cap = PlayerBaseTracker.MaximumBases;
                 truncated = baseSnapshot.OutputTruncated;
             }
@@ -3511,7 +3522,10 @@ internal sealed class LiveMapHttpServer
                     out ResourcePoiGroupSnapshot? resourceGroup) &&
                 resourceGroup != null)
             {
-                count = resourceGroup.Count;
+                count = hideUnexplored
+                    ? Array.FindAll(resourceGroup.Entries,
+                        poi => FogTracker.IsExplored(fogSnapshot, poi.X, poi.Z)).Length
+                    : resourceGroup.Count;
                 cap = resourceGroup.Cap;
                 truncated = resourceGroup.Truncated;
             }
@@ -3562,7 +3576,8 @@ internal sealed class LiveMapHttpServer
         for (int index = 0; index < pois.Count; index++)
         {
             PoiSnapshot poi = pois[index];
-            if (viewLevel == ViewLevel.Public && !PoiGroups.IsPublic(poi.Group))
+            if ((viewLevel == ViewLevel.Public && !PoiGroups.IsPublic(poi.Group)) ||
+                (viewLevel == ViewLevel.Shared && !_config.AllowsSharedPoiGroup(poi.Group)))
             {
                 continue;
             }
@@ -3599,6 +3614,7 @@ internal sealed class LiveMapHttpServer
     }
 
     private void ServePoiGroup(
+        HttpListenerRequest request,
         HttpListenerResponse response,
         ViewLevel viewLevel,
         string requestedGroup)
@@ -3606,7 +3622,8 @@ internal sealed class LiveMapHttpServer
         if (!PoiGroups.TryGet(requestedGroup, out PoiGroupDefinition? definition) ||
             definition == null ||
             (viewLevel == ViewLevel.Public && !PoiGroups.IsPublic(definition.Key)) ||
-            (definition.Resource && !_config.ResourceLayers))
+            (definition.Resource && !_config.ResourceLayers) ||
+                (viewLevel == ViewLevel.Shared && !_config.AllowsSharedPoiGroup(definition.Key)))
         {
             WriteJson(response, HttpStatusCode.NotFound, "{\"error\":\"not found\"}");
             return;
@@ -3616,27 +3633,31 @@ internal sealed class LiveMapHttpServer
         {
             if (string.Equals(definition.Key, "bases", StringComparison.Ordinal))
             {
-                ServePlayerBaseGroup(response);
+                ServePlayerBaseGroup(response, GetEffectiveFogHide(viewLevel, request));
                 return;
             }
 
             if (string.Equals(definition.Key, "ghosts", StringComparison.Ordinal))
             {
-                ServeGhostPoiGroup(response, viewLevel);
+                ServeGhostPoiGroup(response, viewLevel, GetEffectiveFogHide(viewLevel, request));
                 return;
             }
 
-            ServeLocationPoiGroup(response, definition, GetEffectiveFogHide(viewLevel));
+            ServeLocationPoiGroup(response, definition, GetEffectiveFogHide(viewLevel, request));
             return;
         }
 
-        ServeResourcePoiGroup(response, definition);
+        ServeResourcePoiGroup(response, definition, GetEffectiveFogHide(viewLevel, request));
     }
 
-    private void ServePlayerBaseGroup(HttpListenerResponse response)
+    private void ServePlayerBaseGroup(HttpListenerResponse response, bool hideUnexplored)
     {
         _noteBasesRequested();
         PlayerBaseMapSnapshot snapshot = _getPlayerBaseSnapshot();
+        FogMaskSnapshot fogSnapshot = _fogTracker.Snapshot;
+        PlayerBaseEntry[] bases = hideUnexplored
+            ? Array.FindAll(snapshot.Bases, entry => FogTracker.IsExplored(fogSnapshot, entry.X, entry.Z))
+            : snapshot.Bases;
         long nowUnixMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
         long scanAgeMs = snapshot.LastScanUnixMs == 0L
             ? long.MaxValue
@@ -3644,9 +3665,9 @@ internal sealed class LiveMapHttpServer
         bool scanning = snapshot.Scanning ||
                         snapshot.LastScanUnixMs == 0L ||
                         scanAgeMs >= PlayerBaseTracker.CacheMilliseconds;
-        var json = new StringBuilder(160 + (snapshot.Bases.Length * 96));
+        var json = new StringBuilder(160 + (bases.Length * 96));
         json.Append("{\"group\":\"bases\",\"label\":\"Bases\",\"count\":");
-        json.Append(snapshot.Count.ToString(CultureInfo.InvariantCulture));
+        json.Append(bases.Length.ToString(CultureInfo.InvariantCulture));
         if (snapshot.OutputTruncated)
         {
             json.Append(",\"cap\":").Append(
@@ -3675,14 +3696,14 @@ internal sealed class LiveMapHttpServer
             }
         }
         json.Append(",\"pois\":[");
-        for (int index = 0; index < snapshot.Bases.Length; index++)
+        for (int index = 0; index < bases.Length; index++)
         {
             if (index > 0)
             {
                 json.Append(',');
             }
 
-            PlayerBaseEntry playerBase = snapshot.Bases[index];
+            PlayerBaseEntry playerBase = bases[index];
             json.Append('{');
             json.Append("\"id\":").Append(JsonWriter.Quote(playerBase.Id));
             json.Append(",\"x\":").Append(JsonWriter.NumberOneDecimal(playerBase.X));
@@ -3697,9 +3718,14 @@ internal sealed class LiveMapHttpServer
         WriteJson(response, HttpStatusCode.OK, json.ToString());
     }
 
-    private void ServeGhostPoiGroup(HttpListenerResponse response, ViewLevel viewLevel)
+    private void ServeGhostPoiGroup(HttpListenerResponse response, ViewLevel viewLevel, bool hideUnexplored)
     {
         List<PlayerGhostEntry> ghosts = GetVisibleGhosts(viewLevel);
+        if (hideUnexplored)
+        {
+            FogMaskSnapshot fog = _fogTracker.Snapshot;
+            ghosts.RemoveAll(ghost => !FogTracker.IsExplored(fog, ghost.X, ghost.Z));
+        }
         var json = new StringBuilder(128 + (ghosts.Count * 160));
         json.Append("{\"group\":\"ghosts\",\"label\":\"Last seen\",\"count\":");
         json.Append(ghosts.Count.ToString(CultureInfo.InvariantCulture));
@@ -3836,13 +3862,19 @@ internal sealed class LiveMapHttpServer
 
     private void ServeResourcePoiGroup(
         HttpListenerResponse response,
-        PoiGroupDefinition definition)
+        PoiGroupDefinition definition,
+        bool hideUnexplored)
     {
         _noteResourcesRequested();
         ResourcePoiMapSnapshot snapshot = _getResourcePoiSnapshot();
         snapshot.TryGetGroup(definition.Key, out ResourcePoiGroupSnapshot? group);
         ResourcePoiEntry[] pois = group?.Entries ?? Array.Empty<ResourcePoiEntry>();
-        int count = group?.Count ?? 0;
+        FogMaskSnapshot fogSnapshot = _fogTracker.Snapshot;
+        if (hideUnexplored)
+        {
+            pois = Array.FindAll(pois, poi => FogTracker.IsExplored(fogSnapshot, poi.X, poi.Z));
+        }
+        int count = hideUnexplored ? pois.Length : group?.Count ?? 0;
         long nowUnixMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
         long scanAgeMs = snapshot.LastScanUnixMs == 0L
             ? long.MaxValue
@@ -3850,7 +3882,6 @@ internal sealed class LiveMapHttpServer
         bool scanning = snapshot.Scanning ||
                         snapshot.LastScanUnixMs == 0L ||
                         scanAgeMs >= ResourceRefreshMilliseconds;
-        FogMaskSnapshot fogSnapshot = _fogTracker.Snapshot;
         var json = new StringBuilder(128 + (pois.Length * 96));
         json.Append("{\"group\":").Append(JsonWriter.Quote(definition.Key));
         json.Append(",\"label\":").Append(JsonWriter.Quote(definition.Label));
@@ -3922,10 +3953,10 @@ internal sealed class LiveMapHttpServer
         WriteJson(response, HttpStatusCode.OK, json.ToString());
     }
 
-    private void ServeRegions(HttpListenerResponse response, ViewLevel viewLevel)
+    private void ServeRegions(HttpListenerRequest request, HttpListenerResponse response, ViewLevel viewLevel)
     {
         BiomeRegionSnapshot[] regions = _renderer.Regions;
-        bool hideUnexplored = GetEffectiveFogHide(viewLevel);
+        bool hideUnexplored = GetEffectiveFogHide(viewLevel, request);
         FogMaskSnapshot fogSnapshot = hideUnexplored ? _fogTracker.Snapshot : FogMaskSnapshot.Empty;
         var json = new StringBuilder(16 + (regions.Length * 96));
         json.Append("{\"regions\":[");
@@ -4501,7 +4532,7 @@ internal sealed class LiveMapHttpServer
         }
 
         FogMaskSnapshot snapshot = _fogTracker.Snapshot;
-        bool solid = GetEffectiveFogHide(viewLevel);
+        bool solid = GetEffectiveFogHide(viewLevel, request);
         byte[] png;
         lock (_fogPngLock)
         {
@@ -4554,16 +4585,21 @@ internal sealed class LiveMapHttpServer
 
     private string GetEffectiveFogMode(ViewLevel viewLevel)
     {
-        return viewLevel != ViewLevel.Public ? "off" : _getFogMode();
+        return viewLevel == ViewLevel.Shared && !_config.SharedFog ? "off" : _getFogMode();
     }
 
-    // Opaque cover plus hidden unexplored region names and spawn/trader markers. Only the
-    // fogged public view can hide anything; the shared and admin tiers always see it all.
-    private bool GetEffectiveFogHide(ViewLevel viewLevel)
+    // Shared fog is owner-enforced. Admin fog is an optional display preview and never
+    // reduces admin privileges; the preview query cannot override a Shared restriction.
+    private bool GetEffectiveFogHide(ViewLevel viewLevel, HttpListenerRequest? request = null)
     {
-        return viewLevel == ViewLevel.Public &&
-               GetEffectiveFogMode(viewLevel) != "off" &&
-               _config.FogHideUnexplored;
+        if (GetEffectiveFogMode(viewLevel) == "off")
+        {
+            return false;
+        }
+
+        return viewLevel == ViewLevel.Public ? _config.FogHideUnexplored :
+            viewLevel == ViewLevel.Shared ? _config.SharedFog :
+            string.Equals(request?.QueryString["fogpreview"], "1", StringComparison.Ordinal);
     }
 
     private double GetExploredPercentage(FogMaskSnapshot snapshot)

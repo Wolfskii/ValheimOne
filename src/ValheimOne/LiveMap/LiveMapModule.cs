@@ -70,7 +70,7 @@ public sealed class LiveMapModule : IFeatureModule
             "ShareToken",
             string.Empty,
             "Optional token granting a shared spectator map view as ?token= or " +
-            "X-LiveMap-Token: player names, all layers, and follow, but never console or admin " +
+            "X-LiveMap-Token: player names, configured Shared layers, and follow, but never console or admin " +
             "actions.");
         ConfigEntryBool publicView = _feature.Bool(
             "PublicView",
@@ -141,6 +141,18 @@ public sealed class LiveMapModule : IFeatureModule
             "Hide unexplored areas completely on the fogged public view: an opaque cover instead " +
             "of the ghosted tint, and region names, spawn and trader markers stay hidden until " +
             "someone explores them. No effect when FogMode is off.");
+        ConfigEntryBool sharedFog = _feature.Bool(
+            "SharedFog",
+            false,
+            "Apply the configured FogMode to Shared viewers with a locked opaque cover and " +
+            "hide unexplored points of interest and region names. Chat and stats remain " +
+            "available. Set FogMode to trails or explored; off disables fog for every view.");
+        ConfigEntryString sharedPoiGroups = _feature.String(
+            "SharedPoiGroups",
+            "all",
+            "Point-of-interest layers available to Shared viewers: all, none, or space-separated " +
+            "group keys such as spawn trader boss. Only named groups are served. " +
+            "See the configuration reference for the complete list. Admin access is unchanged.");
         ConfigEntryBool consoleEnabled = _feature.Bool(
             "ConsoleEnabled",
             false,
@@ -186,6 +198,8 @@ public sealed class LiveMapModule : IFeatureModule
             resourceLayers,
             fogMode,
             fogHideUnexplored,
+            sharedFog,
+            sharedPoiGroups,
             consoleEnabled,
             consoleWhitelist,
             allowAllCommands,

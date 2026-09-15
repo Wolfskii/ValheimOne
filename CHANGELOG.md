@@ -4,6 +4,18 @@ All notable changes to ValheimOne will be documented in this file. This project 
 
 ## [Unreleased]
 
+## [0.13.13] - 2026-09-15
+
+### Added
+
+- Shared maps can use a locked opaque fog cover through `SharedFog`, using the existing `FogMode` trails or explored setting. Unexplored points of interest and region names stay hidden while chat and stats remain available.
+- `SharedPoiGroups` lets server owners select the point-of-interest groups available to Shared viewers. The default `all` retains existing behavior; `none` hides those layers, or group keys select individual layers.
+- Admin maps offer an optional Fog preview when FogMode is enabled. The preview starts off, remembers the admin's choice separately, and hides unexplored point-of-interest markers and region names while enabled. Admin permissions remain unchanged.
+
+### Upgrade
+
+- Preserve existing configuration. New Shared restrictions are opt-in. These map controls run on the server and in the browser; participating players do not need a client update specifically for this change.
+
 ## [0.13.12] - 2026-09-14
 
 ### Fixed
