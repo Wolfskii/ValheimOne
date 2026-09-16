@@ -20,10 +20,12 @@ public sealed class ServerHostModule : IFeatureModule
     private static ServerHostModule? _active;
 
     private readonly ServerConfig _serverConfig;
+    private readonly ModLogger _log;
 
-    public ServerHostModule(ServerConfig serverConfig)
+    public ServerHostModule(ServerConfig serverConfig, ModLogger log)
     {
         _serverConfig = serverConfig;
+        _log = log;
     }
 
     public string Name => "Server host controls";
@@ -71,6 +73,21 @@ public sealed class ServerHostModule : IFeatureModule
         // Patches stay installed; every body reads the [Server] config at call time.
         _active = this;
 
+        // Everything below rewrites host-side code, and several of the rewrites match constants
+        // that only the dedicated build carries. A player's copy of the game never hosts, so
+        // attempting them there produced a startup error on every launch and left the rest of
+        // this module unpatched. The handshake, config sync and enforcement chassis are installed
+        // separately and are unaffected.
+        if (!GameProcess.IsDedicatedServer)
+        {
+            _log.Info("Server host controls skipped: this is not a dedicated server process.");
+            return;
+        }
+
+        // Compatibility rather than an optional override, so it goes in before any patch that
+        // can fail on a future game build.
+        CrossplayLobbyCompatibility.Apply(harmony);
+
         var peerInfo = AccessTools.Method(typeof(ZNet), "RPC_PeerInfo")
             ?? throw new MissingMethodException(nameof(ZNet), "RPC_PeerInfo");
         harmony.Patch(
@@ -100,9 +117,6 @@ public sealed class ServerHostModule : IFeatureModule
         harmony.Patch(
             passwordValid,
             prefix: new HarmonyMethod(typeof(ServerHostModule), nameof(IsPublicPasswordValidPrefix)));
-
-        // Compatibility applies even when the optional host overrides are disabled.
-        CrossplayLobbyCompatibility.Apply(harmony);
     }
 
     // ZNet.RPC_PeerInfo: `if (GetNrOfPlayers() >= 10)` — the 10 is the inlined

@@ -4,6 +4,13 @@ All notable changes to ValheimOne will be documented in this file. This project 
 
 ## [Unreleased]
 
+## [0.13.15] - 2026-09-16
+
+### Fixed
+
+- A copy of ValheimOne installed on a player's PC no longer logs a Harmony patch failure at startup. The `[Server]` section's host controls rewrite constants that only the dedicated build carries, so on the retail game the lobby-capacity rewrite found nothing and threw, which also left the rest of that section unpatched. Those controls now install only in a dedicated server process; the handshake, config sync and enforcement chassis are unaffected on both sides.
+- Crossplay join-code compatibility is installed before the optional host overrides, so a future game build that breaks a capacity rewrite can no longer take it out with it.
+
 ## [0.13.14] - 2026-09-15
 
 ### Fixed

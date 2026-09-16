@@ -90,7 +90,7 @@ public sealed class ValheimOnePlugin : BaseUnityPlugin
             liveMapModule,
             new ValheimOne.Query.QueryModule(settings.Features),
             discordModule,
-            new ServerHostModule(serverConfig),
+            new ServerHostModule(serverConfig, _log),
         };
 
         settings.WriteDefaultsIfNeeded();
