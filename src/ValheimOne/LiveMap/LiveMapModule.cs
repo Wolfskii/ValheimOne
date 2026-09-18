@@ -110,7 +110,8 @@ public sealed class LiveMapModule : IFeatureModule
             false,
             "Mirror player Say and Shout chat onto authenticated live-map views. " +
             "Disabled by default because chat is player speech and the server owner must " +
-            "explicitly opt in.");
+            "explicitly opt in. When enabled, the last 200 Say and Shout lines persist in " +
+            "chat-history.json and reload after a restart.");
         ConfigEntryBool respectInGameVisibility = _feature.Bool(
             "RespectInGameVisibility",
             true,
@@ -311,7 +312,8 @@ public sealed class LiveMapModule : IFeatureModule
             harmony,
             () => _feature.Enabled.Value,
             () => _config.MirrorChat,
-            _log);
+            _log,
+            _dataDirectory);
         if (LiveMapBehaviour.Instance != null)
         {
             _log.Warning("[LiveMap] behaviour already exists; skipping duplicate initialization.");
@@ -369,6 +371,7 @@ public sealed class LiveMapModule : IFeatureModule
         }
 
         leaderboardBehaviour?.StopPermanently();
+        MapPingPatch.ShutdownChatPersistence();
         store?.Dispose();
         activityHeatmap?.Dispose();
         timelapseRecorder?.Dispose();

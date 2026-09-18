@@ -257,9 +257,9 @@
     var SHIP_HEADING_LENGTH_M = 30;
     var MAP_PING_LIFETIME_MS = 30000;
     var COORDINATE_SEARCH_PULSE_MS = 4000;
-    var CHAT_BUBBLE_LIFETIME_MS = 8000;
+    var CHAT_BUBBLE_LIFETIME_MS = 10000;
     var CHAT_BUBBLE_LIMIT = 8;
-    var CHAT_HISTORY_LIMIT = 32;
+    var CHAT_HISTORY_LIMIT = 200;
     var SAVED_BADGE_REFRESH_MS = 30000;
     var SAVED_STALE_MS = 30 * 60 * 1000;
     var DAY_TOAST_DURATION_MS = 4000;
@@ -8651,6 +8651,15 @@
         return match;
     }
 
+    function isPlayerSpeechChat(chat) {
+        var name = (chat.playerName || "").trim().toLowerCase();
+        return Boolean(name) && name !== "server";
+    }
+
+    function speechBubbleSpeakerKey(chat) {
+        return (chat.playerName || "").trim().toLowerCase();
+    }
+
     function removeChatBubble(record) {
         if (!record || record.removed) {
             return;
@@ -8668,7 +8677,7 @@
     }
 
     function renderChatBubble(chat) {
-        if (!chatFeedAvailable) {
+        if (!chatFeedAvailable || !isPlayerSpeechChat(chat)) {
             return;
         }
         if (!map || !chatLayer) {
@@ -8685,20 +8694,32 @@
             return;
         }
 
+        var speakerKey = speechBubbleSpeakerKey(chat);
+        activeChatBubbles.slice().forEach(function (existing) {
+            if (existing.speakerKey === speakerKey) {
+                removeChatBubble(existing);
+            }
+        });
+
         var playerRecord = matchingPlayerMarker(chat.playerName);
         var anchor = playerRecord
             ? playerRecord.marker.getLatLng()
             : worldToLatLng(chat.x, chat.z);
         var shell = document.createElement("div");
-        var name = document.createElement("span");
         var text = document.createElement("span");
-        shell.className = "map-chat-bubble" + (chat.shout ? " is-shout" : "");
-        name.className = "map-chat-name";
+        shell.className = "map-chat-bubble" +
+            (chat.shout ? " is-shout" : " is-say") +
+            (playerRecord ? " is-anchored" : "");
         text.className = "map-chat-text";
-        name.textContent = (chat.shout ? "📯 " : "") +
-            (chat.shout ? chat.playerName.toUpperCase() : chat.playerName);
         text.textContent = chat.text;
-        shell.appendChild(name);
+        if (!playerRecord) {
+            var name = document.createElement("span");
+            name.className = "map-chat-name";
+            name.textContent = chat.shout
+                ? chat.playerName.toUpperCase()
+                : chat.playerName;
+            shell.appendChild(name);
+        }
         shell.appendChild(text);
 
         var marker = L.marker(anchor, {
@@ -8716,6 +8737,7 @@
             marker: marker,
             playerKey: playerRecord ? playerRecord.player.key : "",
             playerName: chat.playerName,
+            speakerKey: speakerKey,
             removed: false,
             timer: 0
         };
@@ -8829,12 +8851,18 @@
         }
     }
 
+    function chatIdentity(chat) {
+        return String(chat.unixMs) + "|" + chat.playerName + "|" + chat.text + "|" +
+            (chat.shout ? "1" : "0");
+    }
+
     function appendChatHistory(chat, deferRender) {
-        if (chatSequences.has(chat.sequence)) {
+        var identity = chatIdentity(chat);
+        if (chatSequences.has(identity)) {
             return false;
         }
 
-        chatSequences.add(chat.sequence);
+        chatSequences.add(identity);
         chatHistory.push(chat);
         chatHistory.sort(function (left, right) {
             return left.sequence - right.sequence;
@@ -8884,10 +8912,11 @@
             return;
         }
         appendChatHistory(chat, false);
-        if (liveChatSequences.has(chat.sequence)) {
+        var identity = chatIdentity(chat);
+        if (liveChatSequences.has(identity)) {
             return;
         }
-        liveChatSequences.add(chat.sequence);
+        liveChatSequences.add(identity);
 
         var sagaId = "chat:" + chat.unixMs + ":" + chat.sequence;
         if (!sagaChatEvents.some(function (event) { return event.id === sagaId; })) {

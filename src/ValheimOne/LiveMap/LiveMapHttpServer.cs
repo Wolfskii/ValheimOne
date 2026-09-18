@@ -1154,7 +1154,7 @@ internal sealed class LiveMapHttpServer
             var pendingPings = new List<MapPingSnapshot>(16);
             bool sendChat = ChatAvailable(viewLevel);
             long chatCursor = sendChat ? MapPingPatch.LatestChatCursor : 0L;
-            var pendingChats = new List<MapChatSnapshot>(32);
+            var pendingChats = new List<MapChatSnapshot>(ChatHistoryStore.Capacity);
             bool sendActivity = viewLevel != ViewLevel.Public;
             long activityCursor = _activityLog.LatestActivityCursor;
             var pendingActivity = new List<ActivityFeedEntry>(EventStreamActivityBatchSize);
@@ -2884,7 +2884,7 @@ internal sealed class LiveMapHttpServer
             return;
         }
 
-        var chats = new List<MapChatSnapshot>(32);
+        var chats = new List<MapChatSnapshot>(ChatHistoryStore.Capacity);
         MapPingPatch.CopyChatAfter(0L, chats);
         var json = new StringBuilder(16 + (chats.Count * 384));
         json.Append("{\"chats\":[");

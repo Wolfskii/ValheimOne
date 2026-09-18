@@ -108,7 +108,7 @@ With a non-empty `AccessToken`, the same port serves admin actions; console-spec
 | Endpoint | Method | Purpose |
 |---|---|---|
 | `/api/events` | GET (SSE) | Server-Sent-Events stream. Map-view auth rules apply. Named events include `players`, change-detected `status`, new `chat` messages for admin/shared views and for public views when `PublicChat = true`, and — for console-authorized admin tokens only — incremental `log` batches. Sends `retry: 5000`; capped at 8 concurrent streams (`409` beyond). |
-| `/api/chat` | GET | Admin/shared by default; public returns `404` unless `PublicChat = true`. Returns the current 32-message ring buffer oldest-first as `{"chats":[{"sequence":1,"x":0,"z":0,"playerName":"...","text":"...","shout":false,"unixMs":1720000000000}]}`. Player chat follows `MirrorChat`; server-originated shouts remain available when mirroring is off. The public view never gains a send box. |
+| `/api/chat` | GET | Admin/shared by default; public returns `404` unless `PublicChat = true`. Returns the persisted 200-message log oldest-first as `{"chats":[{"sequence":1,"x":0,"z":0,"playerName":"...","text":"...","shout":false,"unixMs":1720000000000}]}`. Player Say and Shout follow `MirrorChat`; server-originated shouts remain available when mirroring is off. History is written to `chat-history.json` and survives plugin restarts. The public view never gains a send box. |
 | `/api/heatmap` | GET `?window=24h|7d` | Admin/shared only; public returns `404`. Returns the aggregate activity grid used by the default-off Activity Heatmap layer. |
 | `/api/timelapse` | GET | Admin/shared only by default; public returns `404` unless `PublicTimelapse = true`. Returns the frame index, disk usage, capture interval, and active retention bounds. |
 | `/api/timelapse/frame` | GET `?t=<unix-ms>` | Uses the same access rules as the timelapse index. Returns one aggregate history frame with explored fog, bases, movement, world day and boss progression, plus portal, bed, and ward positions when captured. |
@@ -197,5 +197,6 @@ URL parameters. Fog hides unknown points even within an allowed group.
 and remain admin/shared only.
 
 `PublicChat`, `PublicLeaderboard`, and `PublicEvents` default to `false`. They expose the
-read-only chat panel (still captured according to `MirrorChat`), the wipe leaderboard, and
+read-only chat panel (still captured according to `MirrorChat`), live speech bubbles over
+player markers, the wipe leaderboard, and
 the live raid overlay. Those three are not fog-gated.
