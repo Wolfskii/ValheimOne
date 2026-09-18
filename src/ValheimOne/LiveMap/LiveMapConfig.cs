@@ -32,6 +32,9 @@ internal sealed class LiveMapConfig
     private readonly ConfigEntryString _sharedPoiGroups;
     private readonly ConfigEntryString _publicPoiGroups;
     private readonly ConfigEntryString _publicEntityGroups;
+    private readonly ConfigEntryBool _publicChat;
+    private readonly ConfigEntryBool _publicLeaderboard;
+    private readonly ConfigEntryBool _publicEvents;
     private readonly ConfigEntryBool _consoleEnabled;
     private readonly ConfigEntryString _consoleWhitelist;
     private readonly ConfigEntryBool _allowAllCommands;
@@ -65,6 +68,9 @@ internal sealed class LiveMapConfig
         ConfigEntryString sharedPoiGroups,
         ConfigEntryString publicPoiGroups,
         ConfigEntryString publicEntityGroups,
+        ConfigEntryBool publicChat,
+        ConfigEntryBool publicLeaderboard,
+        ConfigEntryBool publicEvents,
         ConfigEntryBool consoleEnabled,
         ConfigEntryString consoleWhitelist,
         ConfigEntryBool allowAllCommands,
@@ -97,6 +103,9 @@ internal sealed class LiveMapConfig
         _sharedPoiGroups = sharedPoiGroups;
         _publicPoiGroups = publicPoiGroups;
         _publicEntityGroups = publicEntityGroups;
+        _publicChat = publicChat;
+        _publicLeaderboard = publicLeaderboard;
+        _publicEvents = publicEvents;
         _consoleEnabled = consoleEnabled;
         _consoleWhitelist = consoleWhitelist;
         _allowAllCommands = allowAllCommands;
@@ -197,6 +206,12 @@ internal sealed class LiveMapConfig
 
     public string PublicEntityGroups => (_publicEntityGroups.Value ?? string.Empty).Trim().ToLowerInvariant();
 
+    public bool PublicChat => _publicChat.Value;
+
+    public bool PublicLeaderboard => _publicLeaderboard.Value;
+
+    public bool PublicEvents => _publicEvents.Value;
+
     public bool AllowsSharedPoiGroup(string group)
     {
         return AllowsConfiguredGroup(SharedPoiGroups, group);
@@ -240,11 +255,20 @@ internal sealed class LiveMapConfig
 
     private static bool AllowsConfiguredGroup(string policy, string group)
     {
+        string category = "";
+        if (PoiGroups.TryGet(group, out PoiGroupDefinition? definition) &&
+            definition != null)
+        {
+            category = definition.Category;
+        }
+
         string[] allowed = SplitGroupPolicy(policy);
         for (int index = 0; index < allowed.Length; index++)
         {
             string key = allowed[index];
-            if (key == "all" || key == group)
+            if (key == "all" ||
+                key == group ||
+                (category.Length > 0 && key == category))
             {
                 return true;
             }

@@ -799,6 +799,8 @@
     var availablePoiGroups = new Set();
     var entityLayers = new Map();
     var entityAvailability = "unknown";
+    var chatFeedAvailable = false;
+    var leaderboardFeedAvailable = false;
     var entityRequestPending = false;
     var entityPollTimer = 0;
     var entityFocusPollTimer = 0;
@@ -8666,7 +8668,7 @@
     }
 
     function renderChatBubble(chat) {
-        if (currentView === "public") {
+        if (!chatFeedAvailable) {
             return;
         }
         if (!map || !chatLayer) {
@@ -8845,7 +8847,7 @@
     }
 
     async function ensureChatHistory() {
-        if ((currentView !== "admin" && currentView !== "shared") ||
+        if (!chatFeedAvailable ||
             chatHistoryRequested || (eventSource && !eventSourceOpen)) {
             return;
         }
@@ -8855,7 +8857,7 @@
         try {
             var payload = await fetchJson("/api/chat");
             if (requestSequence !== chatHistoryRequestSequence ||
-                currentView === "public" || !payload ||
+                !chatFeedAvailable || !payload ||
                 !Array.isArray(payload.chats)) {
                 return;
             }
@@ -8873,7 +8875,7 @@
     }
 
     function handleChatPayload(payload) {
-        if (currentView === "public") {
+        if (!chatFeedAvailable) {
             return;
         }
 
@@ -9993,7 +9995,7 @@
         var liveBody = appendLayerSection("live", "Live", liveFeeds);
         appendLayerRow(liveBody, "players", "Players", "●", "players");
         appendLayerRow(liveBody, "trails", "Trails", "〰", "trails");
-        if (hasLiveAccess() && availablePoiGroups.has("ghosts")) {
+        if (availablePoiGroups.has("ghosts")) {
             appendLayerRow(liveBody, "ghosts", "Last seen", "♙", "ghosts");
         }
         if (entityAvailability !== "unavailable") {
@@ -15738,7 +15740,7 @@
     }
 
     function normalizeRaidEvent(value) {
-        if (!hasLiveAccess() || !value ||
+        if (!value ||
             !Number.isFinite(Number(value.x)) || !Number.isFinite(Number(value.z)) ||
             !Number.isFinite(Number(value.radius)) || Number(value.radius) <= 0) {
             return null;
@@ -16290,7 +16292,7 @@
     }
 
     function leaderboardIsExpanded() {
-        return hasLiveAccess() && !elements.leaderboardPanel.hidden &&
+        return leaderboardFeedAvailable && !elements.leaderboardPanel.hidden &&
             !elements.leaderboardPanel.classList.contains("is-collapsed");
     }
 
@@ -16782,6 +16784,18 @@
         renderSagaFeed();
     }
 
+    function updateSidebarFeedAvailability(status) {
+        var view = status && (status.view === "admin" || status.view === "shared")
+            ? status.view
+            : "public";
+        chatFeedAvailable = typeof status.chat === "boolean"
+            ? status.chat
+            : view !== "public";
+        leaderboardFeedAvailable = typeof status.leaderboard === "boolean"
+            ? status.leaderboard
+            : view !== "public";
+    }
+
     function updateView(view) {
         var nextView = view === "admin" || view === "shared" ? view : "public";
         if (nextView !== "admin") {
@@ -16792,16 +16806,23 @@
             ? "Shared view"
             : "Public view";
         elements.watchButton.hidden = nextView === "public";
-        elements.chatPanel.hidden = nextView === "public";
+        elements.chatPanel.hidden = !chatFeedAvailable;
         elements.chatForm.hidden = nextView !== "admin";
         elements.sagaPanel.hidden = nextView === "public";
-        elements.leaderboardPanel.hidden = nextView === "public";
+        elements.leaderboardPanel.hidden = !leaderboardFeedAvailable;
         if (nextView !== "admin") {
             setChatSendNotice("");
         }
         if (nextView === currentView) {
-            ensureSagaActivity();
-            ensureChatHistory();
+            if (currentView !== "public") {
+                ensureSagaActivity();
+            }
+            if (chatFeedAvailable) {
+                ensureChatHistory();
+            }
+            if (leaderboardFeedAvailable && leaderboardIsExpanded()) {
+                scheduleLeaderboardPoll(0);
+            }
             return;
         }
 
@@ -16821,13 +16842,18 @@
         syncWebPinControl();
         if (currentView === "public") {
             clearSagaActivity();
-            clearLeaderboard();
         } else {
             ensureSagaActivity();
+        }
+        if (chatFeedAvailable) {
             ensureChatHistory();
+        }
+        if (leaderboardFeedAvailable) {
             if (leaderboardIsExpanded()) {
                 scheduleLeaderboardPoll(0);
             }
+        } else {
+            clearLeaderboard();
         }
         dismissMapContextMenu();
         if (currentView === "public" && cinemaState) {
@@ -17114,6 +17140,7 @@
         updateLastSaved(status.lastSavedUnixMs);
         renderPlayerCount(status.players);
         updateRenderRevision(status.map);
+        updateSidebarFeedAvailability(status);
         updateView(status.view);
         updateEntityAvailability(status);
         updateConsoleAvailability(status);

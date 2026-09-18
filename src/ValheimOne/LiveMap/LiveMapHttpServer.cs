@@ -931,6 +931,9 @@ internal sealed class LiveMapHttpServer
                                 !string.IsNullOrEmpty(AccessToken) &&
                                 _consoleBridge != null;
         bool hasSharedMapAccess = viewLevel != ViewLevel.Public;
+        bool chatAvailable = ChatAvailable(viewLevel);
+        bool leaderboardAvailable = LeaderboardAvailable(viewLevel);
+        bool eventsAvailable = EventsAvailable(viewLevel);
         bool entitiesAvailable = EntitiesAvailable(viewLevel);
         string mapState = _renderer.StateName;
         string mapProgress = JsonWriter.Number(_renderer.Progress);
@@ -948,7 +951,7 @@ internal sealed class LiveMapHttpServer
         long fogRevision = fogMode == "off" ? 0 : fogSnapshot.Revision;
         double exploredPct = GetExploredPercentage(fogSnapshot);
         EntityMapSnapshot entitySnapshot = _getEntitySnapshot();
-        RaidEventSnapshot? activeEvent = hasSharedMapAccess
+        RaidEventSnapshot? activeEvent = eventsAvailable
             ? entitySnapshot.Event
             : null;
         long snapshotAgeMs = snapshot.UnixMs == 0
@@ -988,8 +991,10 @@ internal sealed class LiveMapHttpServer
                 ? "admin"
                 : viewLevel == ViewLevel.Shared ? "shared" : "public"));
         json.Append(",\"console\":").Append(consoleAvailable ? "true" : "false");
+        json.Append(",\"chat\":").Append(chatAvailable ? "true" : "false");
+        json.Append(",\"leaderboard\":").Append(leaderboardAvailable ? "true" : "false");
         json.Append(",\"entities\":").Append(entitiesAvailable ? "true" : "false");
-        if (hasSharedMapAccess)
+        if (eventsAvailable)
         {
             json.Append(",\"event\":");
             AppendRaidEventJson(json, activeEvent);
@@ -1067,12 +1072,14 @@ internal sealed class LiveMapHttpServer
             key.Append('|').Append(snapshot.JoinCode);
         }
 
+        key.Append('|').Append(chatAvailable ? "chat" : "no-chat");
+        key.Append('|').Append(leaderboardAvailable ? "leaderboard" : "no-leaderboard");
         if (hasSharedMapAccess || entitiesAvailable)
         {
             key.Append('|').Append(entitiesAvailable ? "entities" : "no-entities");
         }
 
-        if (hasSharedMapAccess)
+        if (eventsAvailable)
         {
             key.Append('|');
             if (activeEvent == null)
@@ -1145,7 +1152,7 @@ internal sealed class LiveMapHttpServer
             Stream output = response.OutputStream;
             long pingCursor = MapPingPatch.LatestCursor;
             var pendingPings = new List<MapPingSnapshot>(16);
-            bool sendChat = viewLevel != ViewLevel.Public;
+            bool sendChat = ChatAvailable(viewLevel);
             long chatCursor = sendChat ? MapPingPatch.LatestChatCursor : 0L;
             var pendingChats = new List<MapChatSnapshot>(32);
             bool sendActivity = viewLevel != ViewLevel.Public;
@@ -2869,9 +2876,9 @@ internal sealed class LiveMapHttpServer
         return json.ToString();
     }
 
-    private static void ServeChat(HttpListenerResponse response, ViewLevel viewLevel)
+    private void ServeChat(HttpListenerResponse response, ViewLevel viewLevel)
     {
-        if (viewLevel == ViewLevel.Public)
+        if (!ChatAvailable(viewLevel))
         {
             WriteJson(response, HttpStatusCode.NotFound, "{\"error\":\"not found\"}");
             return;
@@ -2958,7 +2965,7 @@ internal sealed class LiveMapHttpServer
 
     private void ServeLeaderboard(HttpListenerResponse response, ViewLevel viewLevel)
     {
-        if (viewLevel == ViewLevel.Public)
+        if (!LeaderboardAvailable(viewLevel))
         {
             WriteJson(response, HttpStatusCode.NotFound, "{\"error\":\"not found\"}");
             return;
@@ -3293,7 +3300,9 @@ internal sealed class LiveMapHttpServer
             string focusId = focusUserId.ToString(CultureInfo.InvariantCulture) + ":" +
                              focusObjectId.ToString(CultureInfo.InvariantCulture);
             TrackedEntitySnapshot? focused = FindTrackedEntity(focusId);
-            if (focused == null || !AllowsEntityGroup(viewLevel, focused.Group))
+            if (focused == null ||
+                !AllowsEntityGroup(viewLevel, focused.Group) ||
+                !PointIsVisible(viewLevel, focused.X, focused.Z))
             {
                 WriteJson(response, HttpStatusCode.NotFound, "{\"error\":\"not found\"}");
                 return;
@@ -3323,6 +3332,9 @@ internal sealed class LiveMapHttpServer
 
         _noteEntitiesRequested(entitiesRequested, creaturesRequested);
         EntityMapSnapshot snapshot = _getEntitySnapshot();
+        bool hideUnexplored = GetEffectiveFogHide(viewLevel);
+        FogMaskSnapshot fogSnapshot = hideUnexplored ? _fogTracker.Snapshot : FogMaskSnapshot.Empty;
+        bool showOwnerNames = ShowsOwnerNames(viewLevel);
         var json = new StringBuilder(64 + (snapshot.Entities.Length * 112));
         json.Append("{\"revision\":");
         json.Append(snapshot.Revision.ToString(CultureInfo.InvariantCulture));
@@ -3337,6 +3349,11 @@ internal sealed class LiveMapHttpServer
                 continue;
             }
 
+            int visibleCount = CountVisibleEntities(
+                snapshot.Entities,
+                group.Key,
+                hideUnexplored,
+                fogSnapshot);
             if (needsGroupComma)
             {
                 json.Append(',');
@@ -3345,7 +3362,7 @@ internal sealed class LiveMapHttpServer
             json.Append('{');
             json.Append("\"key\":").Append(JsonWriter.Quote(group.Key));
             json.Append(",\"count\":").Append(
-                group.Count.ToString(CultureInfo.InvariantCulture));
+                visibleCount.ToString(CultureInfo.InvariantCulture));
             json.Append(",\"cap\":").Append(
                 group.Cap.ToString(CultureInfo.InvariantCulture));
             if (group.Truncated)
@@ -3362,7 +3379,8 @@ internal sealed class LiveMapHttpServer
         for (int index = 0; index < snapshot.Entities.Length; index++)
         {
             TrackedEntitySnapshot entity = snapshot.Entities[index];
-            if (!AllowsEntityGroup(viewLevel, entity.Group))
+            if (!AllowsEntityGroup(viewLevel, entity.Group) ||
+                (hideUnexplored && !FogTracker.IsExplored(fogSnapshot, entity.X, entity.Z)))
             {
                 continue;
             }
@@ -3387,7 +3405,8 @@ internal sealed class LiveMapHttpServer
             }
             if (string.Equals(entity.Group, "tombstone", StringComparison.Ordinal))
             {
-                json.Append(",\"owner\":").Append(JsonWriter.Quote(entity.Owner));
+                json.Append(",\"owner\":").Append(JsonWriter.Quote(
+                    showOwnerNames ? entity.Owner : string.Empty));
                 if (entity.DeathAgeSec.HasValue)
                 {
                     json.Append(",\"deathAgeSec\":").Append(JsonWriter.Number(
@@ -3396,7 +3415,8 @@ internal sealed class LiveMapHttpServer
             }
             else if (string.Equals(entity.Group, "ward", StringComparison.Ordinal))
             {
-                json.Append(",\"owner\":").Append(JsonWriter.Quote(entity.Owner));
+                json.Append(",\"owner\":").Append(JsonWriter.Quote(
+                    showOwnerNames ? entity.Owner : string.Empty));
                 json.Append(",\"wardEnabled\":").Append(
                     entity.WardEnabled == true ? "true" : "false");
                 json.Append(",\"wardRadius\":").Append(JsonWriter.Number(
@@ -3404,7 +3424,8 @@ internal sealed class LiveMapHttpServer
             }
             else if (string.Equals(entity.Group, "bed", StringComparison.Ordinal))
             {
-                json.Append(",\"owner\":").Append(JsonWriter.Quote(entity.Owner));
+                json.Append(",\"owner\":").Append(JsonWriter.Quote(
+                    showOwnerNames ? entity.Owner : string.Empty));
             }
             else if (string.Equals(entity.Group, "creatures", StringComparison.Ordinal))
             {
@@ -3426,7 +3447,7 @@ internal sealed class LiveMapHttpServer
         json.Append("],\"event\":");
         AppendRaidEventJson(
             json,
-            viewLevel == ViewLevel.Public ? null : snapshot.Event);
+            EventsAvailable(viewLevel) ? snapshot.Event : null);
         json.Append('}');
         WriteJson(response, HttpStatusCode.OK, json.ToString());
     }
@@ -3498,9 +3519,9 @@ internal sealed class LiveMapHttpServer
         PoiCatalog catalog = _getPoiCatalog();
         ResourcePoiMapSnapshot resourceSnapshot = _getResourcePoiSnapshot();
         PlayerBaseMapSnapshot baseSnapshot = _getPlayerBaseSnapshot();
-        List<PlayerGhostEntry>? visibleGhosts = viewLevel == ViewLevel.Public
-            ? null
-            : GetVisibleGhosts(viewLevel);
+        List<PlayerGhostEntry>? visibleGhosts = AllowsPoiGroup(viewLevel, "ghosts")
+            ? GetVisibleGhosts(viewLevel)
+            : null;
         IReadOnlyList<PoiSnapshot> pois = catalog.ServedPois;
         IReadOnlyList<PoiGroupDefinition> definitions = PoiGroups.All;
         FogMaskSnapshot fogSnapshot = _fogTracker.Snapshot;
@@ -3766,7 +3787,8 @@ internal sealed class LiveMapHttpServer
 
             PlayerGhostEntry ghost = ghosts[index];
             json.Append('{');
-            json.Append("\"name\":").Append(JsonWriter.Quote(ghost.CharacterName));
+            json.Append("\"name\":").Append(JsonWriter.Quote(
+                ShowsOwnerNames(viewLevel) ? ghost.CharacterName : string.Empty));
             json.Append(",\"x\":").Append(JsonWriter.NumberOneDecimal(ghost.X));
             json.Append(",\"z\":").Append(JsonWriter.NumberOneDecimal(ghost.Z));
             json.Append(",\"lastSeenUnixMs\":").Append(
@@ -3785,7 +3807,7 @@ internal sealed class LiveMapHttpServer
     private List<PlayerGhostEntry> GetVisibleGhosts(ViewLevel viewLevel)
     {
         var ghosts = new List<PlayerGhostEntry>();
-        if (viewLevel == ViewLevel.Public)
+        if (!AllowsPoiGroup(viewLevel, "ghosts"))
         {
             return ghosts;
         }
@@ -3804,7 +3826,7 @@ internal sealed class LiveMapHttpServer
 
         ghosts.RemoveAll(ghost =>
             onlineNames.Contains(ghost.CharacterName) ||
-            (viewLevel == ViewLevel.Shared &&
+            (viewLevel != ViewLevel.Admin &&
              _respectInGameVisibility &&
              !ghost.PositionShared));
         ghosts.Sort((left, right) =>
@@ -4639,6 +4661,62 @@ internal sealed class LiveMapHttpServer
         return viewLevel != ViewLevel.Public || _config.AllowsAnyPublicEntityGroup();
     }
 
+    private bool ChatAvailable(ViewLevel viewLevel)
+    {
+        return viewLevel != ViewLevel.Public || _config.PublicChat;
+    }
+
+    private bool LeaderboardAvailable(ViewLevel viewLevel)
+    {
+        return viewLevel != ViewLevel.Public || _config.PublicLeaderboard;
+    }
+
+    private bool EventsAvailable(ViewLevel viewLevel)
+    {
+        return viewLevel != ViewLevel.Public || _config.PublicEvents;
+    }
+
+    private bool ShowsOwnerNames(ViewLevel viewLevel)
+    {
+        return viewLevel != ViewLevel.Public || _publicShowPlayerNames;
+    }
+
+    private bool PointIsVisible(ViewLevel viewLevel, float x, float z)
+    {
+        if (!GetEffectiveFogHide(viewLevel))
+        {
+            return true;
+        }
+
+        return FogTracker.IsExplored(_fogTracker.Snapshot, x, z);
+    }
+
+    private static int CountVisibleEntities(
+        TrackedEntitySnapshot[] entities,
+        string group,
+        bool hideUnexplored,
+        FogMaskSnapshot fogSnapshot)
+    {
+        int count = 0;
+        for (int index = 0; index < entities.Length; index++)
+        {
+            TrackedEntitySnapshot entity = entities[index];
+            if (!string.Equals(entity.Group, group, StringComparison.Ordinal))
+            {
+                continue;
+            }
+
+            if (hideUnexplored && !FogTracker.IsExplored(fogSnapshot, entity.X, entity.Z))
+            {
+                continue;
+            }
+
+            count++;
+        }
+
+        return count;
+    }
+
     private bool AllowsEntityGroup(ViewLevel viewLevel, string group)
     {
         if (!_config.EntityLayer)
@@ -4668,7 +4746,9 @@ internal sealed class LiveMapHttpServer
 
         TrackedEntitySnapshot? tracked = FindTrackedEntity(
             requestedId.Substring("entity:".Length));
-        return tracked != null && _config.AllowsPublicEntityGroup(tracked.Group);
+        return tracked != null &&
+               _config.AllowsPublicEntityGroup(tracked.Group) &&
+               PointIsVisible(viewLevel, tracked.X, tracked.Z);
     }
 
     private TrackedEntitySnapshot? FindTrackedEntity(string id)

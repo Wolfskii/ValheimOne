@@ -6,7 +6,7 @@ All notable changes to ValheimOne will be documented in this file. This project 
 
 ### Added
 
-- Public maps can opt into extra world layers through `PublicPoiGroups` and `PublicEntityGroups`. Existing public links still show only spawn and trader markers, with no ships or portals, until the owner names additional groups. `boss` and the dungeon keys add those altars and entrances; `ship portal` with `EntityLayer = true` adds boats, portal pins, and portal-network links. Admin and shared views are unchanged. This setting is server-authoritative.
+- Public maps can opt into extra world layers through `PublicPoiGroups` and `PublicEntityGroups`, plus `PublicChat`, `PublicLeaderboard`, and `PublicEvents`. Existing public links still show only spawn and trader markers, with no ships, last-seen ghosts, chat, leaderboard, or raid overlay, until the owner names additional groups or turns those switches on. Category keys such as `bosses`, `dungeons`, `spawners`, `ores`, and `structures` select the same layer groups as the admin toggles. `FogHideUnexplored` with `FogMode = trails` or `explored` still withholds unexplored region names, points of interest, last-seen markers, ships, portals, carts, wards, beds, and tombstones. Admin and shared views are unchanged. These settings are server-authoritative.
 
 ### Upgrade
 
