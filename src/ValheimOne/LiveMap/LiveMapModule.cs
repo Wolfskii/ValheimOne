@@ -125,7 +125,8 @@ public sealed class LiveMapModule : IFeatureModule
         ConfigEntryBool entityLayer = _feature.Bool(
             "EntityLayer",
             false,
-            "Serve ships, carts, and portals as a toggleable admin map layer.");
+            "Serve ships, carts, and portals as a toggleable admin and shared map layer. " +
+            "Public views stay empty unless PublicEntityGroups names those groups.");
         ConfigEntryBool resourceLayers = _feature.Bool(
             "ResourceLayers",
             true,
@@ -153,6 +154,19 @@ public sealed class LiveMapModule : IFeatureModule
             "Point-of-interest layers available to Shared viewers: all, none, or space-separated " +
             "group keys such as spawn trader boss. Only named groups are served. " +
             "See the configuration reference for the complete list. Admin access is unchanged.");
+        ConfigEntryString publicPoiGroups = _feature.String(
+            "PublicPoiGroups",
+            "spawn trader",
+            "Point-of-interest layers available to the tokenless public view: all, none, or " +
+            "space-separated group keys such as spawn trader boss. Defaults to spawn and trader " +
+            "so a public link does not reveal boss altars or dungeons until the owner opts in. " +
+            "See the configuration reference for the complete list. Admin access is unchanged.");
+        ConfigEntryString publicEntityGroups = _feature.String(
+            "PublicEntityGroups",
+            "none",
+            "Entity groups available to the tokenless public view: none, all, or space-separated " +
+            "keys such as ship portal. Requires EntityLayer. Off by default because live boats " +
+            "and portal tags reveal current player routes. Admin and shared access is unchanged.");
         ConfigEntryBool consoleEnabled = _feature.Bool(
             "ConsoleEnabled",
             false,
@@ -200,6 +214,8 @@ public sealed class LiveMapModule : IFeatureModule
             fogHideUnexplored,
             sharedFog,
             sharedPoiGroups,
+            publicPoiGroups,
+            publicEntityGroups,
             consoleEnabled,
             consoleWhitelist,
             allowAllCommands,

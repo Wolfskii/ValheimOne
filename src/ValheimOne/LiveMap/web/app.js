@@ -9986,15 +9986,23 @@
         heatmapWindowControlElement = null;
         renderJumpChips();
 
-        var liveFeeds = hasLiveAccess() ? ["players", "entities"] : ["players"];
+        var liveFeeds = ["players"];
+        if (entityAvailability !== "unavailable") {
+            liveFeeds.push("entities");
+        }
         var liveBody = appendLayerSection("live", "Live", liveFeeds);
         appendLayerRow(liveBody, "players", "Players", "●", "players");
         appendLayerRow(liveBody, "trails", "Trails", "〰", "trails");
         if (hasLiveAccess() && availablePoiGroups.has("ghosts")) {
             appendLayerRow(liveBody, "ghosts", "Last seen", "♙", "ghosts");
         }
-        if (hasLiveAccess() && entityAvailability !== "unavailable") {
+        if (entityAvailability !== "unavailable") {
             ENTITY_GROUP_ORDER.forEach(function (group) {
+                if (entityAvailability === "available" &&
+                    entityGroupMeta.size > 0 &&
+                    !entityGroupMeta.has(group)) {
+                    return;
+                }
                 appendLayerRow(
                     liveBody,
                     group,
@@ -10049,9 +10057,13 @@
             appendLayerStatus(placesBody, "POIs: no data yet");
         }
 
-        var overlayFeeds = hasLiveAccess()
-            ? ["fog", "entities", "heatmap"]
-            : ["fog"];
+        var overlayFeeds = ["fog"];
+        if (entityAvailability !== "unavailable") {
+            overlayFeeds.push("entities");
+        }
+        if (hasLiveAccess()) {
+            overlayFeeds.push("heatmap");
+        }
         var overlaysBody = appendLayerSection("overlays", "Overlays", overlayFeeds);
         appendMapStyleControl(overlaysBody);
         if (fogAvailable && !fogStatus.locked) {
@@ -10087,13 +10099,15 @@
             "regions",
             { counted: false }
         );
-        appendLayerRow(
-            overlaysBody,
-            "portalNetwork",
-            "Portal network",
-            "╌",
-            "portal-network"
-        );
+        if (entityAvailability !== "unavailable") {
+            appendLayerRow(
+                overlaysBody,
+                "portalNetwork",
+                "Portal network",
+                "╌",
+                "portal-network"
+            );
+        }
         appendLayerRow(
             overlaysBody,
             "tint",
@@ -15122,7 +15136,7 @@
     }
 
     function entityLayersAreAvailable() {
-        return hasLiveAccess() && entityAvailability === "available";
+        return entityAvailability === "available";
     }
 
     function entityDataIsNeeded() {
@@ -15156,7 +15170,7 @@
     }
 
     function updateEntityAvailability(status) {
-        if (!hasLiveAccess() || typeof status.entities !== "boolean") {
+        if (typeof status.entities !== "boolean") {
             return;
         }
 
@@ -15540,7 +15554,7 @@
     function updateEntityPolling(immediate) {
         window.clearTimeout(entityPollTimer);
         entityPollTimer = 0;
-        if (!map || !hasLiveAccess() || document.hidden || pollCircuitOpen ||
+        if (!map || document.hidden || pollCircuitOpen ||
             entityAvailability === "unavailable" ||
             entityRequestPending || !entityDataIsNeeded()) {
             return;
@@ -15565,7 +15579,7 @@
     }
 
     async function pollEntities() {
-        if (!map || !hasLiveAccess() || document.hidden || pollCircuitOpen ||
+        if (!map || document.hidden || pollCircuitOpen ||
             entityRequestPending ||
             entityAvailability === "unavailable") {
             return;
@@ -15632,7 +15646,7 @@
     function updateEntityFocusPolling(immediate) {
         window.clearTimeout(entityFocusPollTimer);
         entityFocusPollTimer = 0;
-        if (!map || !hasLiveAccess() || document.hidden || pollCircuitOpen ||
+        if (!map || document.hidden || pollCircuitOpen ||
             entityAvailability === "unavailable" ||
             entityFocusRequestPending || !followTarget ||
             (followTarget.kind !== "ship" && followTarget.kind !== "cart")) {
@@ -15712,7 +15726,7 @@
     }
 
     function ensureEntityFeed() {
-        if (!map || !hasLiveAccess() || entityAvailability === "unavailable") {
+        if (!map || entityAvailability === "unavailable") {
             return;
         }
 
@@ -16826,17 +16840,7 @@
             syncLayerVisibility();
             probeTimelapseAvailability();
             requestWebPinsFetch();
-            if (hasLiveAccess()) {
-                ensureEntityFeed();
-            } else {
-                window.clearTimeout(entityPollTimer);
-                entityPollTimer = 0;
-                if (followTarget && followTarget.kind !== "player") {
-                    clearFollow();
-                }
-                setFeedState("entities", true);
-                applyRaidEvent(null);
-            }
+            ensureEntityFeed();
         }
         tryBootCinemaFromHash();
     }

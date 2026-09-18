@@ -931,7 +931,7 @@ internal sealed class LiveMapHttpServer
                                 !string.IsNullOrEmpty(AccessToken) &&
                                 _consoleBridge != null;
         bool hasSharedMapAccess = viewLevel != ViewLevel.Public;
-        bool entitiesAvailable = hasSharedMapAccess && _config.EntityLayer;
+        bool entitiesAvailable = EntitiesAvailable(viewLevel);
         string mapState = _renderer.StateName;
         string mapProgress = JsonWriter.Number(_renderer.Progress);
         string renderRevision = _renderer.RenderRevision;
@@ -988,9 +988,9 @@ internal sealed class LiveMapHttpServer
                 ? "admin"
                 : viewLevel == ViewLevel.Shared ? "shared" : "public"));
         json.Append(",\"console\":").Append(consoleAvailable ? "true" : "false");
+        json.Append(",\"entities\":").Append(entitiesAvailable ? "true" : "false");
         if (hasSharedMapAccess)
         {
-            json.Append(",\"entities\":").Append(entitiesAvailable ? "true" : "false");
             json.Append(",\"event\":");
             AppendRaidEventJson(json, activeEvent);
         }
@@ -1021,8 +1021,7 @@ internal sealed class LiveMapHttpServer
         json.Append(",\"worldSpan\":").Append(FogTracker.WorldSpan.ToString(CultureInfo.InvariantCulture));
         json.Append(",\"hide\":").Append(fogHide ? "true" : "false");
         json.Append(",\"locked\":").Append(fogHide && viewLevel != ViewLevel.Admin ? "true" : "false");
-        json.Append(",\"poiPolicy\":").Append(JsonWriter.Quote(
-            viewLevel == ViewLevel.Shared ? _config.SharedPoiGroups : "all"));
+        json.Append(",\"poiPolicy\":").Append(JsonWriter.Quote(GetPoiPolicy(viewLevel)));
         json.Append("}}");
         json.Append(",\"unixMs\":").Append(snapshot.UnixMs.ToString(CultureInfo.InvariantCulture));
         json.Append(",\"snapshotAgeMs\":").Append(snapshotAgeMs.ToString(CultureInfo.InvariantCulture));
@@ -1059,7 +1058,7 @@ internal sealed class LiveMapHttpServer
         key.Append(fogRevision.ToString(CultureInfo.InvariantCulture)).Append('|');
         key.Append(fogHide ? "hide" : "ghost").Append('|');
         key.Append(fogMode).Append('|');
-        key.Append(viewLevel == ViewLevel.Shared ? _config.SharedPoiGroups : "all").Append('|');
+        key.Append(GetPoiPolicy(viewLevel)).Append('|');
         long lastSavedMinute = lastSavedUnixMs > 0L ? lastSavedUnixMs / 60000L : 0L;
         key.Append(lastSavedMinute.ToString(CultureInfo.InvariantCulture)).Append('|');
         key.Append(snapshotStale ? "stale" : "fresh");
@@ -1068,9 +1067,13 @@ internal sealed class LiveMapHttpServer
             key.Append('|').Append(snapshot.JoinCode);
         }
 
-        if (hasSharedMapAccess)
+        if (hasSharedMapAccess || entitiesAvailable)
         {
             key.Append('|').Append(entitiesAvailable ? "entities" : "no-entities");
+        }
+
+        if (hasSharedMapAccess)
+        {
             key.Append('|');
             if (activeEvent == null)
             {
@@ -2573,7 +2576,7 @@ internal sealed class LiveMapHttpServer
                 return;
             }
         }
-        else if (viewLevel == ViewLevel.Public || !_config.EntityLayer)
+        else if (!AllowsEntityTrail(viewLevel, requestedId))
         {
             WriteJson(response, HttpStatusCode.NotFound, "{\"error\":\"not found\"}");
             return;
@@ -3264,7 +3267,7 @@ internal sealed class LiveMapHttpServer
         HttpListenerResponse response,
         ViewLevel viewLevel)
     {
-        if (viewLevel == ViewLevel.Public || !_config.EntityLayer)
+        if (!EntitiesAvailable(viewLevel))
         {
             WriteJson(response, HttpStatusCode.NotFound, "{\"error\":\"not found\"}");
             return;
@@ -3289,6 +3292,13 @@ internal sealed class LiveMapHttpServer
 
             string focusId = focusUserId.ToString(CultureInfo.InvariantCulture) + ":" +
                              focusObjectId.ToString(CultureInfo.InvariantCulture);
+            TrackedEntitySnapshot? focused = FindTrackedEntity(focusId);
+            if (focused == null || !AllowsEntityGroup(viewLevel, focused.Group))
+            {
+                WriteJson(response, HttpStatusCode.NotFound, "{\"error\":\"not found\"}");
+                return;
+            }
+
             _noteEntityFocusRequested(focusId);
             ServeEntityFocus(response, focusId);
             return;
@@ -3303,9 +3313,9 @@ internal sealed class LiveMapHttpServer
             string group = groups[index].Trim();
             if (string.Equals(group, "creatures", StringComparison.OrdinalIgnoreCase))
             {
-                creaturesRequested = true;
+                creaturesRequested = AllowsEntityGroup(viewLevel, "creatures");
             }
-            else if (!string.IsNullOrEmpty(group))
+            else if (!string.IsNullOrEmpty(group) && AllowsEntityGroup(viewLevel, group))
             {
                 entitiesRequested = true;
             }
@@ -3318,14 +3328,20 @@ internal sealed class LiveMapHttpServer
         json.Append(snapshot.Revision.ToString(CultureInfo.InvariantCulture));
         json.Append(",\"time\":").Append(snapshot.UnixMs.ToString(CultureInfo.InvariantCulture));
         json.Append(",\"groups\":[");
+        bool needsGroupComma = false;
         for (int index = 0; index < snapshot.Groups.Length; index++)
         {
-            if (index > 0)
+            EntityGroupSnapshot group = snapshot.Groups[index];
+            if (!AllowsEntityGroup(viewLevel, group.Key))
+            {
+                continue;
+            }
+
+            if (needsGroupComma)
             {
                 json.Append(',');
             }
 
-            EntityGroupSnapshot group = snapshot.Groups[index];
             json.Append('{');
             json.Append("\"key\":").Append(JsonWriter.Quote(group.Key));
             json.Append(",\"count\":").Append(
@@ -3338,17 +3354,24 @@ internal sealed class LiveMapHttpServer
             }
 
             json.Append('}');
+            needsGroupComma = true;
         }
 
         json.Append("],\"entities\":[");
+        bool needsEntityComma = false;
         for (int index = 0; index < snapshot.Entities.Length; index++)
         {
-            if (index > 0)
+            TrackedEntitySnapshot entity = snapshot.Entities[index];
+            if (!AllowsEntityGroup(viewLevel, entity.Group))
+            {
+                continue;
+            }
+
+            if (needsEntityComma)
             {
                 json.Append(',');
             }
 
-            TrackedEntitySnapshot entity = snapshot.Entities[index];
             json.Append('{');
             json.Append("\"id\":").Append(JsonWriter.Quote(entity.Id));
             json.Append(",\"group\":").Append(JsonWriter.Quote(entity.Group));
@@ -3397,10 +3420,13 @@ internal sealed class LiveMapHttpServer
             }
 
             json.Append('}');
+            needsEntityComma = true;
         }
 
         json.Append("],\"event\":");
-        AppendRaidEventJson(json, snapshot.Event);
+        AppendRaidEventJson(
+            json,
+            viewLevel == ViewLevel.Public ? null : snapshot.Event);
         json.Append('}');
         WriteJson(response, HttpStatusCode.OK, json.ToString());
     }
@@ -3489,9 +3515,8 @@ internal sealed class LiveMapHttpServer
         for (int index = 0; index < definitions.Count; index++)
         {
             PoiGroupDefinition definition = definitions[index];
-            if ((viewLevel == ViewLevel.Public && !PoiGroups.IsPublic(definition.Key)) ||
-                (definition.Resource && !_config.ResourceLayers) ||
-                (viewLevel == ViewLevel.Shared && !_config.AllowsSharedPoiGroup(definition.Key)))
+            if (!AllowsPoiGroup(viewLevel, definition.Key) ||
+                (definition.Resource && !_config.ResourceLayers))
             {
                 continue;
             }
@@ -3580,8 +3605,7 @@ internal sealed class LiveMapHttpServer
         for (int index = 0; index < pois.Count; index++)
         {
             PoiSnapshot poi = pois[index];
-            if ((viewLevel == ViewLevel.Public && !PoiGroups.IsPublic(poi.Group)) ||
-                (viewLevel == ViewLevel.Shared && !_config.AllowsSharedPoiGroup(poi.Group)))
+            if (!AllowsPoiGroup(viewLevel, poi.Group))
             {
                 continue;
             }
@@ -3625,9 +3649,8 @@ internal sealed class LiveMapHttpServer
     {
         if (!PoiGroups.TryGet(requestedGroup, out PoiGroupDefinition? definition) ||
             definition == null ||
-            (viewLevel == ViewLevel.Public && !PoiGroups.IsPublic(definition.Key)) ||
-            (definition.Resource && !_config.ResourceLayers) ||
-                (viewLevel == ViewLevel.Shared && !_config.AllowsSharedPoiGroup(definition.Key)))
+            !AllowsPoiGroup(viewLevel, definition.Key) ||
+            (definition.Resource && !_config.ResourceLayers))
         {
             WriteJson(response, HttpStatusCode.NotFound, "{\"error\":\"not found\"}");
             return;
@@ -4574,6 +4597,92 @@ internal sealed class LiveMapHttpServer
             "image/png",
             png,
             "public, max-age=86400");
+    }
+
+    private string GetPoiPolicy(ViewLevel viewLevel)
+    {
+        if (viewLevel == ViewLevel.Shared)
+        {
+            return _config.SharedPoiGroups;
+        }
+
+        if (viewLevel == ViewLevel.Public)
+        {
+            return _config.PublicPoiGroups;
+        }
+
+        return "all";
+    }
+
+    private bool AllowsPoiGroup(ViewLevel viewLevel, string group)
+    {
+        if (viewLevel == ViewLevel.Admin)
+        {
+            return true;
+        }
+
+        if (viewLevel == ViewLevel.Shared)
+        {
+            return _config.AllowsSharedPoiGroup(group);
+        }
+
+        return _config.AllowsPublicPoiGroup(group);
+    }
+
+    private bool EntitiesAvailable(ViewLevel viewLevel)
+    {
+        if (!_config.EntityLayer)
+        {
+            return false;
+        }
+
+        return viewLevel != ViewLevel.Public || _config.AllowsAnyPublicEntityGroup();
+    }
+
+    private bool AllowsEntityGroup(ViewLevel viewLevel, string group)
+    {
+        if (!_config.EntityLayer)
+        {
+            return false;
+        }
+
+        return viewLevel != ViewLevel.Public || _config.AllowsPublicEntityGroup(group);
+    }
+
+    private bool AllowsEntityTrail(ViewLevel viewLevel, string requestedId)
+    {
+        if (!_config.EntityLayer)
+        {
+            return false;
+        }
+
+        if (viewLevel != ViewLevel.Public)
+        {
+            return true;
+        }
+
+        if (!requestedId.StartsWith("entity:", StringComparison.Ordinal))
+        {
+            return false;
+        }
+
+        TrackedEntitySnapshot? tracked = FindTrackedEntity(
+            requestedId.Substring("entity:".Length));
+        return tracked != null && _config.AllowsPublicEntityGroup(tracked.Group);
+    }
+
+    private TrackedEntitySnapshot? FindTrackedEntity(string id)
+    {
+        TrackedEntitySnapshot[] entities = _getEntitySnapshot().Entities;
+        for (int index = 0; index < entities.Length; index++)
+        {
+            if (string.Equals(entities[index].Id, id, StringComparison.Ordinal))
+            {
+                return entities[index];
+            }
+        }
+
+        return null;
     }
 
     private bool SeesAllPlayers(ViewLevel viewLevel)

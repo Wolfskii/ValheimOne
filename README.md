@@ -104,7 +104,7 @@ You need a Valheim Dedicated Server with the Valheim-compatible [BepInEx pack](h
 2. Stop the server and extract the ZIP into its root folder. The plugin belongs at `BepInEx/plugins/ValheimOne.dll`. Preserve your existing `BepInEx/config/valheimone.cfg` when updating; do not replace it with the packaged defaults. On Linux, use the Full pack's `start_server_bepinex.sh` with your usual server arguments.
 3. Start once to generate any missing config, then stop before the initial configuration. In the existing `[LiveMap]` section of `BepInEx/config/valheimone.cfg`, set `Enabled = true`, choose a long unique `AccessToken`, and set `PublicView = false` while configuring access. The live map is disabled by default.
 4. Start the server and wait for the world to load. The default map port is TCP `8790`. On a trusted network, open `http://your-server-ip:8790/?token=YOUR_ADMIN_TOKEN` with your own values. Use an HTTPS reverse proxy for authenticated access over the Internet.
-5. Set `ConsoleEnabled = true` in `[LiveMap]` if you want browser commands. Set `EntityLayer = true` to collect the optional ships, carts and portals layer. For sharing, configure a separate `ShareToken` or enable the tokenless `PublicView`, then choose the fog and public layers. Keep your admin token private.
+5. Set `ConsoleEnabled = true` in `[LiveMap]` if you want browser commands. Set `EntityLayer = true` to collect the optional ships, carts and portals layer. For a public link, `PublicPoiGroups` and `PublicEntityGroups` stay narrow until you name extra groups. For sharing, configure a separate `ShareToken` or enable the tokenless `PublicView`, then choose the fog and public layers. Keep your admin token private.
 
 ```text
 Valheim Dedicated Server/
@@ -156,6 +156,15 @@ Public opaque fog remains controlled by `FogHideUnexplored`.
 or a space-separated selection such as `spawn trader` to show only those groups.
 The setting applies to both the layer list and direct point-of-interest requests.
 [Available group keys](docs/query.md#shared-point-of-interest-groups) are documented in the API reference.
+
+The tokenless public view keeps a narrower default: `PublicPoiGroups = spawn trader`.
+Add `boss` and dungeon keys (`dungeon_crypt`, `dungeon_sunkencrypt`, `dungeon_trollcave`,
+`dungeon_frostcave`, `dungeon_mine`, `dungeon_ashlands`) to show those markers on a
+public link. `PublicEntityGroups = none` hides live ships and portals from the public
+map; set `EntityLayer = true` and `PublicEntityGroups = ship portal` to publish boats
+(Karves, longships, rafts) plus portal pins and pairing lines. `all` remains available
+for both settings. Fog still hides unexplored markers when `FogHideUnexplored` is on.
+These settings are server-authoritative and apply live after the configuration reloads.
 
 Admins can enable **Fog preview** in Layers when `FogMode` is enabled. It starts off and
 remembers the choice separately from Public fog. Turning it on also hides unexplored

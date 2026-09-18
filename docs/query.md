@@ -115,7 +115,7 @@ With a non-empty `AccessToken`, the same port serves admin actions; console-spec
 | `/api/leaderboard` | GET | Admin/shared only; public returns `404`. Returns per-wipe playtime, deaths, and distance traveled for up to 50 display names; no platform identifiers are exposed. |
 | `/api/dungeons` | GET | Admin/shared only; public returns `404`. Returns discovered dungeon entrances with generation and interior state, room counts, and live-player counts. |
 | `/api/dungeons/{id}` | GET | Admin/shared only; public returns `404`. Returns one dungeon's generated room layout and live players inside for the View Interior schematic; unknown IDs return `404`. |
-| `/api/entities` | GET | Admin view + `EntityLayer = true` only. Ship/cart/portal positions from ZDO scans (5 s refresh, 500-entity cap) plus the active raid `event` object. |
+| `/api/entities` | GET | Requires `EntityLayer = true`. Admin and shared views receive every scanned group. The public view is `404` unless `PublicEntityGroups` names groups such as `ship portal`; those responses omit raid events and unlisted groups. |
 
 Admins also get an `"event"` raid object (`{name,x,z,radius,elapsed,duration}` or `null`) on `/api/status` regardless of `EntityLayer`.
 
@@ -179,3 +179,15 @@ these point-of-interest layers. Fog hides unknown points even within an allowed 
 Admin map requests may use `fogpreview=1` on `/api/pois`, `/api/regions` and `/fog.png`
 to render an exploration preview. This is an optional display choice, never an authentication
 parameter. It cannot disable owner-enforced fog or permit a denied Shared group.
+
+## Public point-of-interest and entity groups
+
+`PublicPoiGroups` accepts `all`, `none`, or the same space-separated keys as Shared.
+The default `spawn trader` is the historical public allowlist. Unknown keys grant no
+additional group access. Public viewers cannot override this setting through URL
+parameters. Fog hides unknown points even within an allowed group.
+
+`PublicEntityGroups` accepts `none` (default), `all`, or space-separated entity keys:
+`ship`, `cart`, `portal`, `tombstone`, `ward`, `bed`, `creatures`. It requires
+`EntityLayer = true`. Public entity responses never include the raid `event` object.
+Dungeon interior schematics stay on `/api/dungeons` and remain admin/shared only.

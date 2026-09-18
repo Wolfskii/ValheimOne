@@ -30,6 +30,8 @@ internal sealed class LiveMapConfig
     private readonly ConfigEntryBool _fogHideUnexplored;
     private readonly ConfigEntryBool _sharedFog;
     private readonly ConfigEntryString _sharedPoiGroups;
+    private readonly ConfigEntryString _publicPoiGroups;
+    private readonly ConfigEntryString _publicEntityGroups;
     private readonly ConfigEntryBool _consoleEnabled;
     private readonly ConfigEntryString _consoleWhitelist;
     private readonly ConfigEntryBool _allowAllCommands;
@@ -61,6 +63,8 @@ internal sealed class LiveMapConfig
         ConfigEntryBool fogHideUnexplored,
         ConfigEntryBool sharedFog,
         ConfigEntryString sharedPoiGroups,
+        ConfigEntryString publicPoiGroups,
+        ConfigEntryString publicEntityGroups,
         ConfigEntryBool consoleEnabled,
         ConfigEntryString consoleWhitelist,
         ConfigEntryBool allowAllCommands,
@@ -91,6 +95,8 @@ internal sealed class LiveMapConfig
         _fogHideUnexplored = fogHideUnexplored;
         _sharedFog = sharedFog;
         _sharedPoiGroups = sharedPoiGroups;
+        _publicPoiGroups = publicPoiGroups;
+        _publicEntityGroups = publicEntityGroups;
         _consoleEnabled = consoleEnabled;
         _consoleWhitelist = consoleWhitelist;
         _allowAllCommands = allowAllCommands;
@@ -187,12 +193,57 @@ internal sealed class LiveMapConfig
 
     public string SharedPoiGroups => (_sharedPoiGroups.Value ?? string.Empty).Trim().ToLowerInvariant();
 
+    public string PublicPoiGroups => (_publicPoiGroups.Value ?? string.Empty).Trim().ToLowerInvariant();
+
+    public string PublicEntityGroups => (_publicEntityGroups.Value ?? string.Empty).Trim().ToLowerInvariant();
+
     public bool AllowsSharedPoiGroup(string group)
     {
-        string[] allowed = SharedPoiGroups.Split(new[] { ' ', ',', '\t', '\r', '\n' },
-            StringSplitOptions.RemoveEmptyEntries);
-        foreach (string key in allowed)
+        return AllowsConfiguredGroup(SharedPoiGroups, group);
+    }
+
+    public bool AllowsPublicPoiGroup(string group)
+    {
+        string policy = PublicPoiGroups;
+        if (string.IsNullOrEmpty(policy))
         {
+            return PoiGroups.IsPublic(group);
+        }
+
+        return AllowsConfiguredGroup(policy, group);
+    }
+
+    public bool AllowsPublicEntityGroup(string group)
+    {
+        return AllowsConfiguredGroup(PublicEntityGroups, group);
+    }
+
+    public bool AllowsAnyPublicEntityGroup()
+    {
+        string[] allowed = SplitGroupPolicy(PublicEntityGroups);
+        for (int index = 0; index < allowed.Length; index++)
+        {
+            string key = allowed[index];
+            if (key == "none")
+            {
+                continue;
+            }
+
+            if (key == "all" || key.Length > 0)
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private static bool AllowsConfiguredGroup(string policy, string group)
+    {
+        string[] allowed = SplitGroupPolicy(policy);
+        for (int index = 0; index < allowed.Length; index++)
+        {
+            string key = allowed[index];
             if (key == "all" || key == group)
             {
                 return true;
@@ -200,5 +251,12 @@ internal sealed class LiveMapConfig
         }
 
         return false;
+    }
+
+    private static string[] SplitGroupPolicy(string policy)
+    {
+        return policy.Split(
+            new[] { ' ', ',', '\t', '\r', '\n' },
+            StringSplitOptions.RemoveEmptyEntries);
     }
 }

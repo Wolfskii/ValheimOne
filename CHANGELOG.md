@@ -4,6 +4,14 @@ All notable changes to ValheimOne will be documented in this file. This project 
 
 ## [Unreleased]
 
+### Added
+
+- Public maps can opt into extra world layers through `PublicPoiGroups` and `PublicEntityGroups`. Existing public links still show only spawn and trader markers, with no ships or portals, until the owner names additional groups. `boss` and the dungeon keys add those altars and entrances; `ship portal` with `EntityLayer = true` adds boats, portal pins, and portal-network links. Admin and shared views are unchanged. This setting is server-authoritative.
+
+### Upgrade
+
+- Preserve existing configuration. The new public-layer keys default to the previous public map, so participating players do not need a client update.
+
 ## [0.13.15] - 2026-09-16
 
 ### Fixed
