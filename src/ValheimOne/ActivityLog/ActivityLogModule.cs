@@ -39,8 +39,16 @@ public sealed class ActivityLogModule : IFeatureModule
             "RetentionDays",
             30,
             "Days of UTC activity files to retain, clamped to 1..3650.");
-        _config = new ActivityLogConfig(retentionDays);
-        _worker = new ActivityLogWorker(dataDirectory, () => _config.RetentionDays, log);
+        ConfigEntryInt feedRetentionDays = _feature.Int(
+            "FeedRetentionDays",
+            7,
+            "Days of activity kept in the LiveMap chronicle feed, clamped to 1..3650.");
+        _config = new ActivityLogConfig(retentionDays, feedRetentionDays);
+        _worker = new ActivityLogWorker(
+            dataDirectory,
+            () => _config.RetentionDays,
+            () => _config.FeedRetentionDays,
+            log);
     }
 
     public string Name => "Activity log";
@@ -127,9 +135,10 @@ public sealed class ActivityLogModule : IFeatureModule
     internal long CopyActivityAfter(
         long cursor,
         int maximum,
-        List<ActivityFeedEntry> into)
+        List<ActivityFeedEntry> into,
+        bool oldestFirst = false)
     {
-        return _worker.CopyActivityAfter(cursor, maximum, into);
+        return _worker.CopyActivityAfter(cursor, maximum, into, oldestFirst);
     }
 
     internal long CopyConsoleHistoryAfter(

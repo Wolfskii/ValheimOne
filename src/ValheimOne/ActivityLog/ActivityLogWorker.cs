@@ -13,8 +13,7 @@ internal sealed class ActivityLogWorker
 {
     private const int QueueCapacity = 512;
     private const int HistoryCapacity = 200;
-    private const int ActivityFeedCapacity = 200;
-    private const int ActivitySeedMaximumBytes = 1024 * 1024;
+    private const int ActivityFeedSafetyCap = 20000;
     private const int BatchDelayMilliseconds = 250;
     private const int DateCheckMilliseconds = 60000;
 
@@ -26,11 +25,11 @@ internal sealed class ActivityLogWorker
         new Queue<ActivityEventRecord>(QueueCapacity);
     private readonly List<ConsoleHistoryEntry> _history =
         new List<ConsoleHistoryEntry>(HistoryCapacity);
-    private readonly List<ActivityFeedEntry> _activityFeed =
-        new List<ActivityFeedEntry>(ActivityFeedCapacity);
+    private readonly List<ActivityFeedEntry> _activityFeed = new List<ActivityFeedEntry>();
     private readonly AutoResetEvent _queueSignal = new AutoResetEvent(false);
     private readonly ManualResetEvent _stopSignal = new ManualResetEvent(false);
     private readonly Func<int> _getRetentionDays;
+    private readonly Func<int> _getFeedRetentionDays;
     private readonly ModLogger _log;
     private readonly string _historyPath;
     private readonly string _ghostPath;
@@ -53,10 +52,12 @@ internal sealed class ActivityLogWorker
     public ActivityLogWorker(
         string dataDirectory,
         Func<int> getRetentionDays,
+        Func<int> getFeedRetentionDays,
         ModLogger log)
     {
         DataDirectory = dataDirectory;
         _getRetentionDays = getRetentionDays;
+        _getFeedRetentionDays = getFeedRetentionDays;
         _log = log;
         _historyPath = Path.Combine(dataDirectory, "console-history.json");
         _ghostPath = Path.Combine(dataDirectory, "ghosts.json");
@@ -220,7 +221,8 @@ internal sealed class ActivityLogWorker
     public long CopyActivityAfter(
         long cursor,
         int maximum,
-        List<ActivityFeedEntry> into)
+        List<ActivityFeedEntry> into,
+        bool oldestFirst = false)
     {
         into.Clear();
         lock (_activityFeedLock)
@@ -234,7 +236,9 @@ internal sealed class ActivityLogWorker
 
             int remaining = Math.Max(0, maximum);
             int available = _activityFeed.Count - firstEligible;
-            int first = firstEligible + Math.Max(0, available - remaining);
+            int first = oldestFirst
+                ? firstEligible
+                : firstEligible + Math.Max(0, available - remaining);
             long latestCursor = cursor;
             for (int index = first; index < _activityFeed.Count && remaining > 0; index++)
             {
@@ -757,130 +761,86 @@ internal sealed class ActivityLogWorker
                 record.UnixMs,
                 record.Type,
                 record.DataJson));
-            if (_activityFeed.Count > ActivityFeedCapacity)
+            if (_activityFeed.Count % 64 == 0 || _activityFeed.Count > ActivityFeedSafetyCap)
             {
-                _activityFeed.RemoveAt(0);
+                PruneActivityFeedLocked();
             }
         }
     }
 
     private void LoadRecentActivity()
     {
-        string path = Path.Combine(DataDirectory, ActivityFileName(DateTime.UtcNow.Date));
-        if (!File.Exists(path))
+        int retentionDays = FeedRetentionDays();
+        DateTime today = DateTime.UtcNow.Date;
+        long cutoff = DateTimeOffset.UtcNow.AddDays(-retentionDays).ToUnixTimeMilliseconds();
+        for (int age = retentionDays - 1; age >= 0; age--)
         {
-            return;
-        }
-
-        try
-        {
-            List<string> lines = ReadActivityTail(path);
-            for (int index = 0; index < lines.Count; index++)
+            string path = Path.Combine(
+                DataDirectory,
+                ActivityFileName(today.AddDays(-age)));
+            if (!File.Exists(path))
             {
-                if (ActivityEventJsonParser.TryParse(lines[index], out ActivityEventRecord record))
+                continue;
+            }
+
+            try
+            {
+                using (var stream = new FileStream(
+                           path,
+                           FileMode.Open,
+                           FileAccess.Read,
+                           FileShare.ReadWrite))
+                using (var reader = new StreamReader(stream, Encoding.UTF8))
                 {
-                    AppendActivityFeed(record);
+                    string line;
+                    while ((line = reader.ReadLine()) != null)
+                    {
+                        if (!ActivityEventJsonParser.TryParse(line, out ActivityEventRecord record) ||
+                            record.UnixMs < cutoff)
+                        {
+                            continue;
+                        }
+
+                        AppendActivityFeed(record);
+                    }
                 }
             }
-        }
-        catch (Exception exception)
-        {
-            _log.Warning(
-                $"[ActivityLog] recent activity could not be loaded " +
-                $"({exception.GetType().Name}); starting the web feed empty.");
-            lock (_activityFeedLock)
+            catch (Exception exception)
             {
-                _activityFeed.Clear();
-                _nextActivityFeedId = 0L;
+                _log.Warning(
+                    $"[ActivityLog] recent activity could not be loaded from {Path.GetFileName(path)} " +
+                    $"({exception.GetType().Name}).");
             }
+        }
+
+        lock (_activityFeedLock)
+        {
+            PruneActivityFeedLocked();
         }
     }
 
-    private static List<string> ReadActivityTail(string path)
+    private int FeedRetentionDays()
     {
-        var retained = new Queue<string>(ActivityFeedCapacity);
-        using (var stream = new FileStream(
-                   path,
-                   FileMode.Open,
-                   FileAccess.Read,
-                   FileShare.ReadWrite))
-        {
-            long start = Math.Max(0L, stream.Length - ActivitySeedMaximumBytes);
-            int byteCount = (int)(stream.Length - start);
-            var buffer = new byte[byteCount];
-            stream.Position = start;
-            int read = 0;
-            while (read < byteCount)
-            {
-                int current = stream.Read(buffer, read, byteCount - read);
-                if (current <= 0)
-                {
-                    break;
-                }
-
-                read += current;
-            }
-
-            int lineStart = 0;
-            if (start > 0L)
-            {
-                while (lineStart < read && buffer[lineStart] != (byte)'\n')
-                {
-                    lineStart++;
-                }
-
-                if (lineStart < read)
-                {
-                    lineStart++;
-                }
-            }
-
-            for (int index = lineStart; index < read; index++)
-            {
-                if (buffer[index] != (byte)'\n')
-                {
-                    continue;
-                }
-
-                RetainActivityLine(retained, buffer, lineStart, index - lineStart);
-                lineStart = index + 1;
-            }
-
-            if (lineStart < read)
-            {
-                RetainActivityLine(retained, buffer, lineStart, read - lineStart);
-            }
-        }
-
-        return new List<string>(retained);
+        return Math.Max(1, Math.Min(3650, _getFeedRetentionDays()));
     }
 
-    private static void RetainActivityLine(
-        Queue<string> retained,
-        byte[] buffer,
-        int start,
-        int count)
+    private void PruneActivityFeedLocked()
     {
-        if (count > 0 && buffer[start + count - 1] == (byte)'\r')
+        long cutoff = DateTimeOffset.UtcNow.AddDays(-FeedRetentionDays()).ToUnixTimeMilliseconds();
+        int remove = 0;
+        while (remove < _activityFeed.Count && _activityFeed[remove].UnixMs < cutoff)
         {
-            count--;
+            remove++;
         }
 
-        if (count <= 0)
+        if (remove > 0)
         {
-            return;
+            _activityFeed.RemoveRange(0, remove);
         }
 
-        string line = Encoding.UTF8.GetString(buffer, start, count);
-        if (string.IsNullOrWhiteSpace(line))
+        if (_activityFeed.Count > ActivityFeedSafetyCap)
         {
-            return;
-        }
-
-        retained.Enqueue(line);
-        if (retained.Count > ActivityFeedCapacity)
-        {
-            retained.Dequeue();
+            _activityFeed.RemoveRange(0, _activityFeed.Count - ActivityFeedSafetyCap);
         }
     }
 
