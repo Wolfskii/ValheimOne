@@ -1255,6 +1255,7 @@ internal sealed class LiveMapHttpServer
                         activityCursor,
                         EventStreamActivityBatchSize,
                         pendingActivity,
+                        false,
                         out long nextActivityCursor,
                         out int activityCount);
                     if (activityCount > 0)
@@ -1457,11 +1458,16 @@ internal sealed class LiveMapHttpServer
         }
 
         long cursor = Math.Max(0L, ParseLong(request.QueryString["cursor"], 0L));
+        bool oldestFirst = string.Equals(
+            request.QueryString["order"],
+            "asc",
+            StringComparison.Ordinal);
         var entries = new List<ActivityFeedEntry>(EventStreamActivityBatchSize);
         string json = BuildActivityJson(
             cursor,
             EventStreamActivityBatchSize,
             entries,
+            oldestFirst,
             out _,
             out _);
         WriteJson(response, HttpStatusCode.OK, json);
@@ -1471,13 +1477,14 @@ internal sealed class LiveMapHttpServer
         long cursor,
         int maximum,
         List<ActivityFeedEntry> entries,
+        bool oldestFirst,
         out long latestCursor,
         out int eventCount)
     {
         bool enabled = _activityLog.ActivityFeedEnabled;
         entries.Clear();
         latestCursor = enabled
-            ? _activityLog.CopyActivityAfter(cursor, maximum, entries)
+            ? _activityLog.CopyActivityAfter(cursor, maximum, entries, oldestFirst)
             : _activityLog.LatestActivityCursor;
         eventCount = entries.Count;
 
