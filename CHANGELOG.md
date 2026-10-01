@@ -7,7 +7,7 @@ All notable changes to ValheimOne will be documented in this file. This project 
 ### Added
 
 - Public maps can opt into extra world layers through `PublicPoiGroups` and `PublicEntityGroups`, plus `PublicChat`, `PublicLeaderboard`, and `PublicEvents`. Existing public links still show only spawn and trader markers, with no ships, last-seen ghosts, chat, leaderboard, or raid overlay, until the owner names additional groups or turns those switches on. Category keys such as `bosses`, `dungeons`, `spawners`, `ores`, and `structures` select the same layer groups as the admin toggles. `FogHideUnexplored` with `FogMode = trails` or `explored` still withholds unexplored region names, points of interest, last-seen markers, ships, portals, carts, wards, beds, and tombstones. Admin and shared views are unchanged. These settings are server-authoritative.
-- LiveMap chat now keeps the last 200 Say and Shout messages on disk (`chat-history.json` in the ValheimOne data directory) and reloads them after a plugin or container restart. Player speech still follows `MirrorChat`.
+- LiveMap chat now keeps the last 200 Say and Shout messages on disk (`chat-history.json` in the ValheimOne data directory) and reloads them after a plugin or container restart. Ordinary enter-to-talk Say lines are included with Shout.
 
 ### Changed
 

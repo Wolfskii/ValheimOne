@@ -107,11 +107,10 @@ public sealed class LiveMapModule : IFeatureModule
             "more revealing than a live position dot, so opening it is an explicit owner decision.");
         ConfigEntryBool mirrorChat = _feature.Bool(
             "MirrorChat",
-            false,
-            "Mirror player Say and Shout chat onto authenticated live-map views. " +
-            "Disabled by default because chat is player speech and the server owner must " +
-            "explicitly opt in. When enabled, the last 200 Say and Shout lines persist in " +
-            "chat-history.json and reload after a restart.");
+            true,
+            "Compatibility setting. Player Say and Shout are recorded for the live map and the " +
+            "public hall whenever LiveMap is enabled, including ordinary enter-to-talk lines. " +
+            "The last 200 lines persist in chat-history.json and reload after a restart.");
         ConfigEntryBool respectInGameVisibility = _feature.Bool(
             "RespectInGameVisibility",
             true,
@@ -176,8 +175,8 @@ public sealed class LiveMapModule : IFeatureModule
             "PublicChat",
             false,
             "Show the read-only chat panel on the tokenless public view. Off by default because " +
-            "chat is player speech. The public view never gains a send box. MirrorChat still " +
-            "controls whether player Say and Shout are captured.");
+            "chat is player speech. The public view never gains a send box. Player Say and Shout " +
+            "are recorded whenever LiveMap is enabled.");
         ConfigEntryBool publicLeaderboard = _feature.Bool(
             "PublicLeaderboard",
             false,
@@ -188,6 +187,12 @@ public sealed class LiveMapModule : IFeatureModule
             false,
             "Show the live raid-event overlay on the tokenless public view. Off by default " +
             "because a raid circle marks where players are fighting. Admin and shared access is unchanged.");
+        ConfigEntryBool publicDungeonInteriors = _feature.Bool(
+            "PublicDungeonInteriors",
+            false,
+            "Let the tokenless public view open interiors for dungeon entrances that are already " +
+            "visible on that view. FogHideUnexplored and PublicPoiGroups still hide entrances that " +
+            "have not been explored. Admin and shared access is unchanged.");
         ConfigEntryBool consoleEnabled = _feature.Bool(
             "ConsoleEnabled",
             false,
@@ -240,6 +245,7 @@ public sealed class LiveMapModule : IFeatureModule
             publicChat,
             publicLeaderboard,
             publicEvents,
+            publicDungeonInteriors,
             consoleEnabled,
             consoleWhitelist,
             allowAllCommands,

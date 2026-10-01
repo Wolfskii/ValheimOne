@@ -993,6 +993,8 @@ internal sealed class LiveMapHttpServer
         json.Append(",\"console\":").Append(consoleAvailable ? "true" : "false");
         json.Append(",\"chat\":").Append(chatAvailable ? "true" : "false");
         json.Append(",\"leaderboard\":").Append(leaderboardAvailable ? "true" : "false");
+        json.Append(",\"dungeonInteriors\":").Append(
+            DungeonInteriorsAvailable(viewLevel) ? "true" : "false");
         json.Append(",\"entities\":").Append(entitiesAvailable ? "true" : "false");
         if (eventsAvailable)
         {
@@ -2345,7 +2347,7 @@ internal sealed class LiveMapHttpServer
 
     private void ServeDungeons(HttpListenerResponse response, ViewLevel viewLevel)
     {
-        if (viewLevel == ViewLevel.Public)
+        if (!DungeonInteriorsAvailable(viewLevel))
         {
             WriteJson(response, HttpStatusCode.NotFound, "{\"error\":\"not found\"}");
             return;
@@ -2354,21 +2356,31 @@ internal sealed class LiveMapHttpServer
         DungeonRegistrySnapshot snapshot = _ensureDungeonsScanned();
         LiveMapSnapshot playerSnapshot = _getSnapshot();
         Dictionary<string, int> playersInside = CountPlayersInside(playerSnapshot);
-        var json = new StringBuilder(128 + (snapshot.Dungeons.Count * 192));
+        var visible = new List<DungeonSnapshot>(snapshot.Dungeons.Count);
+        for (int index = 0; index < snapshot.Dungeons.Count; index++)
+        {
+            DungeonSnapshot dungeon = snapshot.Dungeons[index];
+            if (PublicDungeonInteriorVisible(viewLevel, dungeon))
+            {
+                visible.Add(dungeon);
+            }
+        }
+
+        var json = new StringBuilder(128 + (visible.Count * 192));
         json.Append("{\"unixMs\":").Append(
             snapshot.RefreshedUnixMs.ToString(CultureInfo.InvariantCulture));
         json.Append(",\"scanning\":").Append(snapshot.Scanning ? "true" : "false");
         json.Append(",\"ready\":").Append(
             snapshot.InitialScanComplete ? "true" : "false");
         json.Append(",\"dungeons\":[");
-        for (int index = 0; index < snapshot.Dungeons.Count; index++)
+        for (int index = 0; index < visible.Count; index++)
         {
             if (index > 0)
             {
                 json.Append(',');
             }
 
-            DungeonSnapshot dungeon = snapshot.Dungeons[index];
+            DungeonSnapshot dungeon = visible[index];
             playersInside.TryGetValue(dungeon.Id, out int playerCount);
             json.Append('{');
             AppendDungeonMetadataJson(json, dungeon, playerCount);
@@ -2384,7 +2396,7 @@ internal sealed class LiveMapHttpServer
         ViewLevel viewLevel,
         string requestedId)
     {
-        if (viewLevel == ViewLevel.Public)
+        if (!DungeonInteriorsAvailable(viewLevel))
         {
             WriteJson(response, HttpStatusCode.NotFound, "{\"error\":\"not found\"}");
             return;
@@ -2402,7 +2414,7 @@ internal sealed class LiveMapHttpServer
             }
         }
 
-        if (dungeon == null)
+        if (dungeon == null || !PublicDungeonInteriorVisible(viewLevel, dungeon))
         {
             WriteJson(response, HttpStatusCode.NotFound, "{\"error\":\"not found\"}");
             return;
@@ -4641,6 +4653,27 @@ internal sealed class LiveMapHttpServer
         }
 
         return "all";
+    }
+
+    private bool DungeonInteriorsAvailable(ViewLevel viewLevel)
+    {
+        return viewLevel != ViewLevel.Public || _config.PublicDungeonInteriors;
+    }
+
+    private bool PublicDungeonInteriorVisible(ViewLevel viewLevel, DungeonSnapshot dungeon)
+    {
+        if (viewLevel != ViewLevel.Public)
+        {
+            return true;
+        }
+
+        if (!AllowsPoiGroup(ViewLevel.Public, dungeon.Type))
+        {
+            return false;
+        }
+
+        return !GetEffectiveFogHide(ViewLevel.Public) ||
+               FogTracker.IsExplored(_fogTracker.Snapshot, dungeon.EntranceX, dungeon.EntranceZ);
     }
 
     private bool AllowsPoiGroup(ViewLevel viewLevel, string group)

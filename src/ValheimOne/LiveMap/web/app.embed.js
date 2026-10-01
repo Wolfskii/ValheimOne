@@ -879,6 +879,7 @@
     var leaderboardRequestPending = false;
     var leaderboardRequestSequence = 0;
     var leaderboardPollTimer = 0;
+    var dungeonInteriorsAvailable = false;
     var dungeonRegistryState = {
         dungeons: [],
         loaded: false,
@@ -1147,6 +1148,10 @@
 
     function hasLiveAccess() {
         return currentView !== "public";
+    }
+
+    function canOpenDungeonInteriors() {
+        return hasLiveAccess() || dungeonInteriorsAvailable;
     }
 
     function authorizedUrl(path, includeToken) {
@@ -4675,7 +4680,7 @@
                 if (ship) {
                     armShipTow(ship);
                 }
-            } else if (action === "dungeon-open" && hasLiveAccess()) {
+            } else if (action === "dungeon-open" && canOpenDungeonInteriors()) {
                 openDungeonInterior(key);
             } else if (action === "watch" && kind === "player") {
                 enterCinema(key);
@@ -13205,7 +13210,7 @@
     function scheduleDungeonRegistryPoll(delay) {
         window.clearTimeout(dungeonRegistryState.timer);
         dungeonRegistryState.timer = 0;
-        if (!hasLiveAccess() || dungeonRegistryState.ready || pollCircuitOpen) {
+        if (!canOpenDungeonInteriors() || dungeonRegistryState.ready || pollCircuitOpen) {
             return;
         }
         dungeonRegistryState.timer = window.setTimeout(function () {
@@ -13239,7 +13244,7 @@
     }
 
     async function requestDungeonRegistry() {
-        if (!hasLiveAccess() || dungeonRegistryState.pending ||
+        if (!canOpenDungeonInteriors() || dungeonRegistryState.pending ||
             dungeonRegistryState.ready || pollCircuitOpen) {
             return;
         }
@@ -13252,7 +13257,7 @@
         state.pending = true;
         try {
             var payload = await fetchJson("api/dungeons");
-            if (state !== dungeonRegistryState || !hasLiveAccess()) {
+            if (state !== dungeonRegistryState || !canOpenDungeonInteriors()) {
                 return;
             }
 
@@ -13272,7 +13277,7 @@
                 return;
             }
             state.pending = false;
-            if (!state.ready && hasLiveAccess()) {
+            if (!state.ready && canOpenDungeonInteriors()) {
                 scheduleDungeonRegistryPoll(DUNGEON_REGISTRY_POLL_INTERVAL_MS);
             }
             refreshOpenPopupContent();
@@ -13280,7 +13285,7 @@
     }
 
     function ensureDungeonRegistry() {
-        if (!hasLiveAccess() || dungeonRegistryState.ready ||
+        if (!canOpenDungeonInteriors() || dungeonRegistryState.ready ||
             dungeonRegistryState.pending || dungeonRegistryState.timer) {
             return;
         }
@@ -13367,7 +13372,7 @@
         }
         rows.push(positionPopupRow(record.x, record.z));
         var actions = [];
-        if (hasLiveAccess() && isDungeonEntrancePoiGroup(record.group)) {
+        if (canOpenDungeonInteriors() && isDungeonEntrancePoiGroup(record.group)) {
             actions.push(dungeonPopupAction(record));
         }
         return popupShell({
@@ -13839,7 +13844,7 @@
     function scheduleDungeonDetailPoll(delay) {
         window.clearTimeout(dungeonDetailPollTimer);
         dungeonDetailPollTimer = 0;
-        if (!activeDungeonId || !hasLiveAccess() || pollCircuitOpen) {
+        if (!activeDungeonId || !canOpenDungeonInteriors() || pollCircuitOpen) {
             return;
         }
         dungeonDetailPollTimer = window.setTimeout(function () {
@@ -13849,7 +13854,7 @@
     }
 
     async function requestActiveDungeonDetail() {
-        if (!activeDungeonId || !hasLiveAccess() || pollCircuitOpen) {
+        if (!activeDungeonId || !canOpenDungeonInteriors() || pollCircuitOpen) {
             return;
         }
         if (document.hidden) {
@@ -13898,7 +13903,7 @@
     }
 
     function openDungeonInterior(dungeonId) {
-        if (!hasLiveAccess() || typeof dungeonId !== "string" || !dungeonId) {
+        if (!canOpenDungeonInteriors() || typeof dungeonId !== "string" || !dungeonId) {
             return;
         }
 
@@ -16823,6 +16828,7 @@
         leaderboardFeedAvailable = typeof status.leaderboard === "boolean"
             ? status.leaderboard
             : view !== "public";
+        dungeonInteriorsAvailable = status.dungeonInteriors === true || view !== "public";
     }
 
     function updateView(view) {
@@ -17342,7 +17348,7 @@
                 scheduleLazyPoiPoll(group, 0);
             }
         });
-        if (hasLiveAccess() && dungeonRegistryState.loaded &&
+        if (canOpenDungeonInteriors() && dungeonRegistryState.loaded &&
             !dungeonRegistryState.ready && !dungeonRegistryState.pending) {
             scheduleDungeonRegistryPoll(0);
         }

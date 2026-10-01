@@ -35,6 +35,7 @@ internal sealed class LiveMapConfig
     private readonly ConfigEntryBool _publicChat;
     private readonly ConfigEntryBool _publicLeaderboard;
     private readonly ConfigEntryBool _publicEvents;
+    private readonly ConfigEntryBool _publicDungeonInteriors;
     private readonly ConfigEntryBool _consoleEnabled;
     private readonly ConfigEntryString _consoleWhitelist;
     private readonly ConfigEntryBool _allowAllCommands;
@@ -71,6 +72,7 @@ internal sealed class LiveMapConfig
         ConfigEntryBool publicChat,
         ConfigEntryBool publicLeaderboard,
         ConfigEntryBool publicEvents,
+        ConfigEntryBool publicDungeonInteriors,
         ConfigEntryBool consoleEnabled,
         ConfigEntryString consoleWhitelist,
         ConfigEntryBool allowAllCommands,
@@ -106,6 +108,7 @@ internal sealed class LiveMapConfig
         _publicChat = publicChat;
         _publicLeaderboard = publicLeaderboard;
         _publicEvents = publicEvents;
+        _publicDungeonInteriors = publicDungeonInteriors;
         _consoleEnabled = consoleEnabled;
         _consoleWhitelist = consoleWhitelist;
         _allowAllCommands = allowAllCommands;
@@ -211,6 +214,8 @@ internal sealed class LiveMapConfig
     public bool PublicLeaderboard => _publicLeaderboard.Value;
 
     public bool PublicEvents => _publicEvents.Value;
+
+    public bool PublicDungeonInteriors => _publicDungeonInteriors.Value;
 
     public bool AllowsSharedPoiGroup(string group)
     {
